@@ -1,0 +1,192 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{geometry}
+\geometry{margin=1in}
+\begin{document}
+\section*{Tully-Fisher Symbolic Regression Equations}
+
+\subsection*{Model: classic\_TF (Rank 1)}
+Individual R$^2$: 0.0000, RMSE: 1.5551\\
+Complexity: 1\\
+Score: 0.000000\\
+\begin{equation*}
+y = -22.863014
+\end{equation*}
+
+\subsection*{Model: classic\_TF (Rank 2)}
+Individual R$^2$: 0.3819, RMSE: 1.2226\\
+Complexity: 3\\
+Score: 0.240528\\
+\begin{equation*}
+y = -20.376057 - log\_observed\_velocity
+\end{equation*}
+
+\subsection*{Model: classic\_TF (Rank 3)}
+Individual R$^2$: 0.8895, RMSE: 0.5170\\
+Complexity: 4\\
+Score: 1.721591\\
+\begin{equation*}
+y = sqrt(log\_observed\_velocity) * -14.527084
+\end{equation*}
+
+\subsection*{Model: classic\_TF (Rank 4)}
+Individual R$^2$: 0.9039, RMSE: 0.4822\\
+Complexity: 5\\
+Score: 0.139431\\
+\begin{equation*}
+y = -12.502496 - (log\_observed\_velocity * 4.165709)
+\end{equation*}
+
+\subsection*{Model: classic\_TF (Rank 5)}
+Individual R$^2$: 0.9039, RMSE: 0.4822\\
+Complexity: 6\\
+Score: 0.000000\\
+\begin{equation*}
+y = (abs(log\_observed\_velocity) * -4.165719) + -12.502474
+\end{equation*}
+
+\subsection*{Model: classic\_TF (Rank 6)}
+Individual R$^2$: 0.9046, RMSE: 0.4803\\
+Complexity: 8\\
+Score: 0.003823\\
+\begin{equation*}
+y = -22.038666 - log((observed\_velocity\_norm ^ 1.8537761) + 0.026003096)
+\end{equation*}
+
+\subsection*{Model: classic\_TF (Rank 7)}
+Individual R$^2$: 0.9046, RMSE: 0.4802\\
+Complexity: 10\\
+Score: 0.000145\\
+\begin{equation*}
+y = (sqrt(log\_observed\_velocity) * (-15.279313 - (0.26560837 / observed\_velocity\_norm))) + 1.5221217
+\end{equation*}
+
+\subsection*{Model: classic\_TF (Rank 8)}
+Individual R$^2$: 0.9047, RMSE: 0.4800\\
+Complexity: 11\\
+Score: 0.001159\\
+\begin{equation*}
+y = ((0.7629954 ^ observed\_velocity\_norm) + -12.249727) - ((log\_observed\_velocity - -0.6589154) * 3.5723069)
+\end{equation*}
+
+\subsection*{Model: classic\_TF (Rank 9)}
+Individual R$^2$: 0.9047, RMSE: 0.4800\\
+Complexity: 12\\
+Score: 0.000000\\
+\begin{equation*}
+y = (sqrt(0.5821555 ^ observed\_velocity\_norm) + -12.258445) - ((log\_observed\_velocity - -0.65573543) * 3.5730937)
+\end{equation*}
+
+\subsection*{Model: classic\_TF (Rank 10)}
+Individual R$^2$: 0.9050, RMSE: 0.4794\\
+Complexity: 13\\
+Score: 0.002547\\
+\begin{equation*}
+y = (sqrt(log\_observed\_velocity) * (-14.53215 - abs((0.20658731 / observed\_velocity\_norm) + -0.07435101))) + 0.17303316
+\end{equation*}
+
+\subsection*{Model: inclination\_corrected\_TF (Rank 1)}
+Individual R$^2$: 0.0000, RMSE: 1.5551\\
+Complexity: 1\\
+Score: 0.000000\\
+\begin{equation*}
+y = -22.86303
+\end{equation*}
+
+\subsection*{Model: inclination\_corrected\_TF (Rank 2)}
+Individual R$^2$: 0.3819, RMSE: 1.2226\\
+Complexity: 3\\
+Score: 0.240528\\
+\begin{equation*}
+y = -20.376057 - log\_observed\_velocity
+\end{equation*}
+
+\subsection*{Model: inclination\_corrected\_TF (Rank 3)}
+Individual R$^2$: 0.8895, RMSE: 0.5170\\
+Complexity: 4\\
+Score: 1.721591\\
+\begin{equation*}
+y = sqrt(log\_observed\_velocity) * -14.527142
+\end{equation*}
+
+\subsection*{Model: inclination\_corrected\_TF (Rank 4)}
+Individual R$^2$: 0.9039, RMSE: 0.4822\\
+Complexity: 5\\
+Score: 0.139431\\
+\begin{equation*}
+y = (log\_observed\_velocity * -4.165768) + -12.502329
+\end{equation*}
+
+\subsection*{Model: inclination\_corrected\_TF (Rank 5)}
+Individual R$^2$: 0.9044, RMSE: 0.4809\\
+Complexity: 7\\
+Score: 0.002709\\
+\begin{equation*}
+y = ((sin\_inclination + log\_observed\_velocity) * -4.197619) + -12.362276
+\end{equation*}
+
+\subsection*{Model: inclination\_corrected\_TF (Rank 6)}
+Individual R$^2$: 0.9045, RMSE: 0.4805\\
+Complexity: 8\\
+Score: 0.001419\\
+\begin{equation*}
+y = (log(observed\_velocity\_norm + 0.058913615) / -0.52936757) + -21.959383
+\end{equation*}
+
+\subsection*{Model: inclination\_corrected\_TF (Rank 7)}
+Individual R$^2$: 0.9057, RMSE: 0.4776\\
+Complexity: 9\\
+Score: 0.012283\\
+\begin{equation*}
+y = ((log\_observed\_velocity + (sin\_inclination * observed\_velocity\_norm)) * -4.004966) + -12.799664
+\end{equation*}
+
+\subsection*{Model: inclination\_corrected\_TF (Rank 8)}
+Individual R$^2$: 0.9057, RMSE: 0.4774\\
+Complexity: 11\\
+Score: 0.000263\\
+\begin{equation*}
+y = ((((observed\_velocity\_norm * sin\_inclination) ^ 0.9095054) + log\_observed\_velocity) * -3.9674828) + -12.856682
+\end{equation*}
+
+\subsection*{Model: inclination\_corrected\_TF (Rank 9)}
+Individual R$^2$: 0.9060, RMSE: 0.4769\\
+Complexity: 12\\
+Score: 0.002258\\
+\begin{equation*}
+y = log(log\_observed\_velocity) + (((log\_observed\_velocity ^ (observed\_velocity\_norm ^ sin\_inclination)) * -4.296377) + -13.011824)
+\end{equation*}
+
+\subsection*{Model: inclination\_corrected\_TF (Rank 10)}
+Individual R$^2$: 0.9062, RMSE: 0.4764\\
+Complexity: 13\\
+Score: 0.002203\\
+\begin{equation*}
+y = (sin\_inclination ^ ((log\_observed\_velocity * sin\_inclination) * observed\_velocity\_norm)) + ((log\_observed\_velocity * -3.7744148) + -14.242348)
+\end{equation*}
+
+\subsection*{Model: inclination\_corrected\_TF (Rank 11)}
+Individual R$^2$: 0.9062, RMSE: 0.4762\\
+Complexity: 15\\
+Score: 0.000343\\
+\begin{equation*}
+y = (log\_observed\_velocity * -3.7311282) + ((sin\_inclination ^ ((observed\_velocity\_norm * (log\_observed\_velocity * sin\_inclination)) - sin\_inclination)) + -14.398076)
+\end{equation*}
+
+\subsection*{Model: inclination\_corrected\_TF (Rank 12)}
+Individual R$^2$: 0.9063, RMSE: 0.4760\\
+Complexity: 16\\
+Score: 0.000726\\
+\begin{equation*}
+y = (sin\_inclination ^ abs(((log\_observed\_velocity * observed\_velocity\_norm) * sin\_inclination) - sin\_inclination)) + ((log\_observed\_velocity * -3.7468345) + -14.356396)
+\end{equation*}
+
+\subsection*{Model: inclination\_corrected\_TF (Rank 13)}
+Individual R$^2$: 0.9063, RMSE: 0.4760\\
+Complexity: 18\\
+Score: 0.000018\\
+\begin{equation*}
+y = ((log\_observed\_velocity * -3.7468345) + (sin\_inclination ^ abs(((observed\_velocity\_norm * log\_observed\_velocity) * sin\_inclination) - (sin\_inclination / 1.0594547)))) + -14.356396
+\end{equation*}
+
+\end{document}

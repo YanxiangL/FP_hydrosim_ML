@@ -1,0 +1,13 @@
+Complexity,Loss,Equation
+1,2.4183793,"-22.86303"
+3,1.4948723,"-20.376057 - log_observed_velocity"
+4,0.6697348,"-22.434698 - log(observed_velocity_norm)"
+5,0.23247309,"-12.50244 - (log_observed_velocity * 4.165732)"
+8,0.23070094,"-22.040195 - log((observed_velocity_norm ^ 1.8523704) + 0.025530512)"
+11,0.23062818,"(log(log(observed_velocity_norm + 1.8284172) * observed_velocity_norm) * -1.3380228) + -22.008924"
+12,0.23033716,"-17.764137 - log((((60.120308 - observed_velocity_norm) * observed_velocity_norm) + 14.302817) * observed_velocity_norm)"
+13,0.23033674,"-17.742525 - log(abs(observed_velocity_norm * ((observed_velocity_norm * (61.313732 - observed_velocity_norm)) + 14.6994)))"
+14,0.23017956,"-17.706882 - log(((observed_velocity_norm * 58.564167) * (observed_velocity_norm + 0.31078848)) + (0.27009246 / distance_modulus))"
+16,0.22828625,"-17.75223 - log((0.25492597 / distance_modulus) + ((observed_velocity_norm * (61.170364 - observed_velocity_norm)) * (observed_velocity_norm + 0.23353861)))"
+18,0.22817573,"-17.75344 - log((0.5228319 / (log_observed_velocity * distance_modulus)) + (((observed_velocity_norm + 0.23258995) * (61.130356 - observed_velocity_norm)) * observed_velocity_norm))"
+20,0.22794585,"-17.758955 - log((0.27449164 / ((log_observed_velocity * distance_modulus) * observed_velocity_norm)) + (((61.00042 - observed_velocity_norm) * observed_velocity_norm) * (observed_velocity_norm + 0.22686951)))"

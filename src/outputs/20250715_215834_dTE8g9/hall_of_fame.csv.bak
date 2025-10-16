@@ -1,0 +1,11 @@
+Complexity,Loss,Equation
+1,2.4183793,"-22.862982"
+3,1.4948723,"-20.376057 - log_observed_velocity"
+4,0.6697348,"-22.434696 - log(observed_velocity_norm)"
+5,0.23247308,"-12.502464 - (log_observed_velocity * 4.165691)"
+7,0.23246922,"1160.3807 - ((log_observed_velocity * 4.1656227) + 1172.8834)"
+8,0.23090868,"-21.942945 - log((observed_velocity_norm + 0.065481134) ^ 1.9003496)"
+9,0.23082891,"-11.979267 - ((log_observed_velocity * 4.3412876) + (0.0979848 / observed_velocity_norm))"
+10,0.23067147,"((log_observed_velocity * -14.734885) + 6.5700397) / (log(log_observed_velocity) + 0.4053945)"
+11,0.2305314,"(((observed_velocity_norm * 0.1988196) ^ 0.70308185) + -17.07163) - (log_observed_velocity * log_observed_velocity)"
+13,0.2303704,"-13.508085 - ((log_observed_velocity * (3.6031926 + (observed_velocity_norm * -0.16833498))) + (observed_velocity_norm * 0.65314394))"

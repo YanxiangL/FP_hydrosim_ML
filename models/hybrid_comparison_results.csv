@@ -1,0 +1,5 @@
+method,expression,description,r2,rmse,complexity
+Template-Based,a + b * log_v,Linear TF (log v),0.6740607358225235,0.8588209826901555,4
+Template-Based,a - b * log_v + c * log_v * log_v,TF + velocity²,0.6621698451660145,0.8425997071973461,7
+Template-Based,a - b * log_v + c * log_D,TF + distance,0.6121304810846859,0.9097813752763982,6
+Template-Based,a - b * log_v,Classic TF,0.5373191446161218,0.8923034924514136,3

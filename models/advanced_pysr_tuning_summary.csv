@@ -1,0 +1,2 @@
+configuration,test_r2,test_rmse,train_r2,train_rmse,runtime_minutes,n_equations,best_equation,best_complexity
+Physics_Constrained,1.0,3.734576388870294e-15,1.0,3.4467731623401673e-15,0.4233984152475993,3,-22.825840061276494,1

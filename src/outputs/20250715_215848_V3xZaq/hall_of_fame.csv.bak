@@ -1,0 +1,13 @@
+Complexity,Loss,Equation
+1,2.4183793,"-22.863026"
+3,0.89534265,"-11.821721 - log_stellar_mass"
+4,0.6697348,"-22.434696 - log(observed_velocity_norm)"
+5,0.2324731,"-12.502434 - (log_observed_velocity * 4.1657333)"
+7,0.23163496,"((observed_velocity_norm ^ 0.031581733) * -56.13256) + 34.053215"
+8,0.22432758,"((observed_velocity_norm ^ 0.08305161) * -18.817047) - sqrt(log_stellar_mass)"
+10,0.22413005,"(((observed_velocity_norm ^ 0.06601603) + -0.2147598) * -23.967505) - sqrt(log_stellar_mass)"
+12,0.22371389,"(-18.833534 * ((observed_velocity_norm ^ 0.08551497) + (observed_velocity_norm * -0.00096654624))) - sqrt(log_stellar_mass)"
+14,0.22334988,"(((observed_velocity_norm * -0.0016592318) + ((observed_velocity_norm + 0.041789986) ^ 0.08965027)) * -18.766441) - sqrt(log_stellar_mass)"
+15,0.22329572,"(observed_velocity_norm * 0.046887226) + (((observed_velocity_norm ^ 0.10931034) * -18.851507) + (log10(observed_velocity_norm) - sqrt(log_stellar_mass)))"
+17,0.2232704,"((observed_velocity_norm ^ 0.10918354) * ((observed_velocity_norm * 0.03201552) + -18.77575)) + (log10(observed_velocity_norm) - sqrt(log_stellar_mass - -0.3912834))"
+20,0.22327033,"(log10(abs(observed_velocity_norm)) + ((observed_velocity_norm ^ 0.10918513) * (((observed_velocity_norm + 0.2771104) * 0.032017298) + -18.7844))) - sqrt(log_stellar_mass - -0.39254257)"

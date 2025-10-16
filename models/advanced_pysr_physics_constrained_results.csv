@@ -1,0 +1,4 @@
+expression,description,complexity,loss,score,r2,rmse,method
+-22.825840061276494,Advanced PySR Physics_Constrained #1,1,2.270327297516038,0.0,1.0,3.734576388870294e-15,advanced_pysr_physics_constrained
+x4 * -2.0646766605372737,Advanced PySR Physics_Constrained #2,3,0.0690436278851656,1.7464703455158037,1.0,3.734576388870294e-15,advanced_pysr_physics_constrained
+4.829999999999995 - (x4 * 2.4999999999999996),Advanced PySR Physics_Constrained #3,5,1.1880245232628438e-29,31.96482957380938,1.0,3.734576388870294e-15,advanced_pysr_physics_constrained

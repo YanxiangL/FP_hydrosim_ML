@@ -1,0 +1,37 @@
+\begin{table}[htbp]
+\centering
+\caption{Symbolic Regression Results for Tully-Fisher Relations}
+\label{tab:tf_results}
+\begin{tabular}{p{3cm}ccp{6cm}ccccccc}
+\toprule
+Model & Rank & Equation & Complexity & Loss & Score & $R^2_{\text{ind}}$ & RMSE$_{\text{ind}}$ & $R^2_{\text{overall}}$ & RMSE$_{\text{overall}}$ \\
+\midrule
+\multirow{9}{*}{\begin{tabular}{@{}c@{}}Classic\\TF\end{tabular}} 
+& 1 & $-22.863325$ & 1 & 2.4184 & 0.0000 & $2.534 \times 10^{-7}$ & 1.5551 & 0.8895 & 0.5170 \\
+& 2 & $-20.376057 - \log_{10}(v_{\text{obs}})$ & 3 & 1.4949 & 0.2405 & 0.3819 & 1.2226 & 0.8895 & 0.5170 \\
+& 3 & $\sqrt{\log_{10}(v_{\text{obs}})} \times (-14.527092)$ & 4 & 0.2673 & 1.7216 & 0.8895 & 0.5170 & 0.8895 & 0.5170 \\
+& 4 & $-12.502441 - (\log_{10}(v_{\text{obs}}) \times 4.1657)$ & 5 & 0.2325 & 0.1394 & 0.9039 & 0.4822 & 0.8895 & 0.5170 \\
+& 5 & $\left(\sqrt{\log_{10}(v_{\text{obs}})} - \log_{10}(v_{\text{obs}})\right) \times 6.0794 - 17.306345$ & 8 & 0.2314 & 0.0016 & 0.9043 & 0.4810 & 0.8895 & 0.5170 \\
+& 6 & $\log_{10}(v_{\text{obs}}) \times \left(\ln(\log_{10}(\log_{10}(v_{\text{obs}}))) - 1.1104\right) \times 4.5085$ & 9 & 0.2307 & 0.0030 & 0.9046 & 0.4803 & 0.8895 & 0.5170 \\
+& 7 & $\sqrt{\log_{10}(v_{\text{obs}})} \times \left(-15.289 - \frac{0.2667}{v_{\text{norm}}}\right) + 1.5386$ & 10 & 0.2306 & 0.0002 & 0.9046 & 0.4802 & 0.8895 & 0.5170 \\
+& 8 & $\sqrt{\log_{10}(v_{\text{obs}})} \times (-15.691) + 2.2859 - \frac{\log_{10}(v_{\text{obs}})}{v_{\text{norm}}} \times 0.2360$ & 12 & 0.2305 & 0.0002 & 0.9047 & 0.4802 & 0.8895 & 0.5170 \\
+& 9 & $\sqrt{\log_{10}(v_{\text{obs}})} \times (-14.984) + 0.9190 - \frac{\frac{0.2549}{v_{\text{norm}}} + 0.4408}{\exp(v_{\text{norm}})}$ & 15 & 0.2303 & 0.0003 & 0.9048 & 0.4799 & 0.8895 & 0.5170 \\
+\midrule
+\multirow{14}{*}{\begin{tabular}{@{}c@{}}Inclination-\\corrected\\TF\end{tabular}} 
+& 1 & $-22.86292$ & 1 & 2.4184 & 0.0000 & $2.534 \times 10^{-7}$ & 1.5551 & 0.8895 & 0.5170 \\
+& 2 & $-20.376057 - \log_{10}(v_{\text{obs}})$ & 3 & 1.4949 & 0.2405 & 0.3819 & 1.2226 & 0.8895 & 0.5170 \\
+& 3 & $\sqrt{\log_{10}(v_{\text{obs}})} \times (-14.527067)$ & 4 & 0.2673 & 1.7216 & 0.8895 & 0.5170 & 0.8895 & 0.5170 \\
+& 4 & $\log_{10}(v_{\text{obs}}) \times (-4.1657) - 12.50244$ & 5 & 0.2325 & 0.1394 & 0.9039 & 0.4822 & 0.8895 & 0.5170 \\
+& 5 & $(\log_{10}(v_{\text{obs}}) + 2.9471) \times (-4.1929 - \sin(i))$ & 7 & 0.2309 & 0.0033 & 0.9045 & 0.4806 & 0.8895 & 0.5170 \\
+& 6 & $\log_{10}(v_{\text{obs}}) \times \exp(\sin(i)) \times (-4.1917) - 12.289387$ & 8 & 0.2307 & 0.0012 & 0.9046 & 0.4803 & 0.8895 & 0.5170 \\
+& 7 & $(v_{\text{norm}} \times \sin(i) + \log_{10}(v_{\text{obs}}) + 3.1960) \times (-4.0050)$ & 9 & 0.2281 & 0.0113 & 0.9057 & 0.4776 & 0.8895 & 0.5170 \\
+& 8 & $v_{\text{norm}} \times \sin(i) \times (-4.3763) + (\log_{10}(v_{\text{obs}}) + 3.2162) \times (-3.9891)$ & 11 & 0.2280 & 0.0001 & 0.9057 & 0.4775 & 0.8895 & 0.5170 \\
+& 9 & $\ln(\sin(i)) \times v_{\text{norm}} \times \sin(i) + (\log_{10}(v_{\text{obs}}) + 3.2393) \times (-3.9733)$ & 12 & 0.2280 & 0.0002 & 0.9057 & 0.4775 & 0.8895 & 0.5170 \\
+& 10 & $\left(-3.9281 - \sin(i) \times \frac{v_{\text{norm}}}{\exp(\sin(i) \times v_{\text{norm}})}\right) \times (\log_{10}(v_{\text{obs}}) + 3.2957)$ & 14 & 0.2279 & 0.0001 & 0.9057 & 0.4774 & 0.8895 & 0.5170 \\
+& 11 & $\left(v_{\text{norm}} \times \sin(i) + \log_{10}(v_{\text{obs}}) + 2.9754 + 0.2766^{(\log_{10}(v_{\text{obs}}))^{1.3151}}\right) \times (-4.1518)$ & 15 & 0.2272 & 0.0034 & 0.9061 & 0.4766 & 0.8895 & 0.5170 \\
+& 12 & $\left(-3.9281 - \sin(i) \times (v_{\text{norm}} - \sin(i) \times \exp(v_{\text{norm}} \times 0.3716))\right) \times (\log_{10}(v_{\text{obs}}) + 3.2957)$ & 16 & 0.2270 & 0.0009 & 0.9062 & 0.4764 & 0.8895 & 0.5170 \\
+& 13 & $\left(-3.9170 - \sin(i) \times \left(v_{\text{norm}} - \exp(v_{\text{norm}}) \times (\sin(i))^{\log_{10}(v_{\text{obs}})} \times 0.6631\right)\right) \times (\log_{10}(v_{\text{obs}}) + 3.3111)$ & 18 & 0.2267 & 0.0005 & 0.9062 & 0.4762 & 0.8895 & 0.5170 \\
+& 14 & $\left(-3.9170 - \sin(i) \times \left(v_{\text{norm}} - \exp(v_{\text{norm}}) \times (\sin(i))^{\log_{10}(v_{\text{obs}})} \times 0.6631\right)\right) \times (\log_{10}(v_{\text{obs}}) + 3.3111)^{\cos(i)}$ & 20 & 0.2267 & 0.0001 & 0.9063 & 0.4761 & 0.8895 & 0.5170 \\
+\bottomrule
+\end{tabular}
+\end{table}
