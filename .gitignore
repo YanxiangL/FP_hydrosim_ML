@@ -1,0 +1,12 @@
+.venv/
+*.png
+*.zip
+*.npz
+*.h5
+*.tar
+*.tar.gz
+*.tgz
+*.jpg
+*.jpeg
+*.gif
+*.tiff
