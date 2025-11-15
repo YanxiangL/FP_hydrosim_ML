@@ -660,7 +660,6 @@ class TNG50TullyFisherGenerator:
                             else:
                                 galaxy_data_single[field] = np.nan
 
-                    print(galaxy_data_single.keys())
                     galaxy_data.append(galaxy_data_single)
 
         self.galaxy_data = galaxy_data
@@ -755,6 +754,7 @@ class TNG50TullyFisherGenerator:
                 position_angle_star,
                 axial_ratio_star,
                 ellipticity_star,
+                orientation_angle_star,
             ) = self.find_inclination_ellipticity(
                 stellar_data_single,
                 gas_data_single,
@@ -773,6 +773,7 @@ class TNG50TullyFisherGenerator:
                 position_angle_gas,
                 axial_ratio_gas,
                 ellipticity_gas,
+                orientation_angle_gas,
             ) = self.find_inclination_ellipticity(
                 stellar_data_single,
                 gas_data_single,
@@ -790,6 +791,7 @@ class TNG50TullyFisherGenerator:
             gas_data_single["Position_Angle"] = position_angle_gas
             gas_data_single["Axial_Ratio"] = axial_ratio_gas
             gas_data_single["Ellipticity"] = ellipticity_gas
+            gas_data_single["Orientation_Angle"] = orientation_angle_gas
 
             stellar_data_single["Pos_align"] = pos_align_star
             stellar_data_single["Vel_align"] = vel_align_star
@@ -801,6 +803,7 @@ class TNG50TullyFisherGenerator:
             stellar_data_single["Position_Angle"] = position_angle_star
             stellar_data_single["Axial_Ratio"] = axial_ratio_star
             stellar_data_single["Ellipticity"] = ellipticity_star
+            stellar_data_single["Orientation_Angle"] = orientation_angle_star
 
             gas_data.append(gas_data_single)
 
@@ -922,7 +925,12 @@ class TNG50TullyFisherGenerator:
             mass_star = np.delete(data_stellar["Masses"], wind_particle_index, axis=0)
             # Calculate the angular momentum axis
             axis = kinematics.AngularMomentum(
-                mass_star, pos, vel, return_ji=False, range=2.0 * 4.80
+                mass_star,
+                pos,
+                vel,
+                return_ji=False,
+                # Restrict to twice the stellar half-mass radius
+                range=2.0 * data_subhalo["SubhaloHalfmassRadStars"],
             )
         else:
             gas_pos = data_gas["Coordinates"]
@@ -932,7 +940,12 @@ class TNG50TullyFisherGenerator:
             mass_gas = data_gas["Masses"]
             # Calculate the angular momentum axis
             axis = kinematics.AngularMomentum(
-                mass_gas, pos, vel, return_ji=False, range=2.0 * 4.80
+                mass_gas,
+                pos,
+                vel,
+                return_ji=False,
+                # Restrict to twice the stellar half-mass radius
+                range=2.0 * data_subhalo["SubhaloHalfmassRadStars"],
             )
 
         # Assuming line-of-sight is along the z-axis
@@ -1033,7 +1046,99 @@ class TNG50TullyFisherGenerator:
             position_angle,
             axial_ratio,
             ellipticity,
+            orientation_angle,
         )
+
+    def plot_vmap(self, subhalo_id, stat, xedges, yedges, method="star"):
+        """Plot velocity map and save to file
+        Parameters:
+        -----------
+        subhalo_id : int
+            Subhalo ID
+        stat : numpy.ndarray
+            Velocity map data
+        xedges : numpy.ndarray
+            X edges of the histogram
+        yedges : numpy.ndarray
+            Y edges of the histogram
+        method : str
+            Method used ('star' or 'gas')
+        """
+        fig, ax = plt.subplots(1, 2, figsize=(8, 6))
+        im = ax[0].imshow(
+            stat.T,
+            origin="lower",
+            extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
+            cmap="RdBu_r",  # red-blue diverging map
+            vmin=-np.nanmax(abs(stat)),
+            vmax=np.nanmax(abs(stat)),  # symmetric color scale
+        )
+        ax[1].plot(xedges, stat.T[100, :], color="k", lw=0.5, alpha=0.5)
+        fig.colorbar(im, ax=ax[0], label=r"$v_{\rm los}$ [km/s]")
+        ax[0].set_xlabel("x [kpc]")
+        ax[0].set_ylabel("y [kpc]")
+        ax[0].set_title("Line-of-sight Velocity Map")
+        ax[1].set_xlabel("x [kpc]")
+        plt.savefig(f"galaxy_{subhalo_id}_vmap_edgeon_{method}.png", dpi=300)
+        plt.close(fig)
+
+    def plot_edgeon_faceon_view(self, pos_norm, pos_lim, subhalo_id, method="star"):
+        # Edge-on view of the galaxy
+        fig, ax = plt.subplots(1, 2, figsize=(20, 8))
+        ax[0].hist2d(
+            pos_norm[:, 1],
+            pos_norm[:, 2],
+            bins=(200, 200),
+            range=[[-pos_lim, pos_lim], [-pos_lim, pos_lim]],
+        )
+        ax[0].set_xlabel("y [kpc]", fontsize=14)
+        ax[0].set_ylabel("z [kpc]", fontsize=14)
+
+        # Face-on view of the galaxy
+        ax[1].hist2d(
+            pos_norm[:, 0],
+            pos_norm[:, 1],
+            bins=(200, 200),
+            range=[[-pos_lim, pos_lim], [-pos_lim, pos_lim]],
+        )
+        ax[1].set_xlabel("x [kpc]", fontsize=14)
+        ax[1].set_ylabel("y [kpc]", fontsize=14)
+
+        plt.savefig(f"galaxy_{subhalo_id}_edgeon_faceon_{method}.png", dpi=300)
+        plt.close(fig)
+
+    def plot_phase_space(
+        self, pos_norm, vel_norm, pos_lim, vel_lim, subhalo_id, method="star"
+    ):
+        # Phase-space plot
+        fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+        ax[0].hist2d(
+            pos_norm[:, 0],
+            vel_norm[:, 0],
+            bins=(200, 200),
+            range=[[-pos_lim, pos_lim], [-vel_lim, vel_lim]],
+        )
+        ax[0].set_xlabel("x [kpc]", fontsize=14)
+        ax[0].set_ylabel("vx [km/s]", fontsize=14)
+        ax[1].hist2d(
+            pos_norm[:, 1],
+            vel_norm[:, 1],
+            bins=(200, 200),
+            range=[[-pos_lim, pos_lim], [-vel_lim, vel_lim]],
+        )
+        ax[1].set_xlabel("y [kpc]", fontsize=14)
+        ax[1].set_ylabel("vy [km/s]", fontsize=14)
+        ax[2].hist2d(
+            pos_norm[:, 2],
+            vel_norm[:, 2],
+            bins=(200, 200),
+            range=[[-pos_lim, pos_lim], [-vel_lim, vel_lim]],
+        )
+        ax[2].set_xlabel("z [kpc]", fontsize=14)
+        ax[2].set_ylabel("vz [km/s]", fontsize=14)
+
+        plt.savefig(f"galaxy_{subhalo_id}_pv_diagram_{method}.png", dpi=300)
+        plt.close(fig)
 
 
 def main():
