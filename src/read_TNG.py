@@ -50,6 +50,7 @@ import io
 import h5py
 import kinematics
 from scipy.spatial.transform import Rotation
+from configobj import ConfigObj
 
 
 warnings.filterwarnings("ignore")
@@ -75,6 +76,7 @@ class TNG50TullyFisherGenerator:
         snapshot=99,
         out_dir=".",
         supplementary_dir="",
+        sup_files=[],
     ):
         """
         Initialize the TNG50 Tully-Fisher data generator
@@ -96,8 +98,6 @@ class TNG50TullyFisherGenerator:
         self.api_key = api_key or self._get_api_key()
         self.simulation = simulation
         self.snapshot = snapshot
-        self.redshift = 0.0  # z=0 for snapshot 99
-        self.scale_factor = 1.0 / (1.0 + self.redshift)
 
         # TNG API base URL
         self.base_url = "https://www.tng-project.org/api/"
@@ -117,7 +117,6 @@ class TNG50TullyFisherGenerator:
 
         # Set up cosmology for SKIRT calculations
         self.cosmo = FlatLambdaCDM(H0=self.h * 100, Om0=self.Om0)
-        self.age_snapshot = self.cosmo.age(self.redshift).value  # Gyr
 
         # Smoothing scale of the TNG50 simulation
         self.epsilon_star = 0.288  # kpc
@@ -127,6 +126,10 @@ class TNG50TullyFisherGenerator:
         # Output and supplementary directories
         self.out_dir = out_dir
         self.supplementary_dir = supplementary_dir
+        self.sup_files = sup_files  # List of supplementary files to load
+        self.num_sub_files = len(
+            self.sup_files
+        )  # Find the number of supplementary files
 
         self.galaxy_data = None
         self.stellar_data = None
@@ -137,6 +140,13 @@ class TNG50TullyFisherGenerator:
 
         # Test API connection
         self._test_api_connection()
+
+        # Get some basic simulation info
+        self.get_simulation_info()
+
+        self.scale_factor = 1.0 / (1.0 + self.redshift)
+        self.age_snapshot = self.cosmo.age(self.redshift).value  # Gyr
+        print(self.scale_factor, self.age_snapshot, self.redshift)
 
     def _get_api_key(self):
         """Get API key from environment or prompt user"""
@@ -192,7 +202,7 @@ class TNG50TullyFisherGenerator:
     # Get supplementary data
     def get_supplementary_data(
         self,
-        file_name="morphs_kinematic_bars.hdf5",
+        file_name,
     ):
         """
         Get supplementary data for a specific subhalo
@@ -215,9 +225,25 @@ class TNG50TullyFisherGenerator:
                 # print(len(f[f"Snapshot_{self.snapshot}"]["SubhaloID"]))
                 fields = []
 
+                n_subhalos = len(f[f"Snapshot_{self.snapshot}"]["SubhaloID"])
+
+                subhalo_axis_all = []
                 for field in f[f"Snapshot_{self.snapshot}"].keys():
                     data[field] = f[f"Snapshot_{self.snapshot}"][field][:]
                     fields.append(field)
+
+                    subhalo_axis = None
+                    shape = data[field].shape
+                    for ax, size in enumerate(shape):
+                        if size == n_subhalos:
+                            subhalo_axis = ax
+                            break
+
+                    if subhalo_axis is None:
+                        raise ValueError(
+                            f"No axis matches nsub={n_subhalos} for dataset '{field}'"
+                        )
+                    subhalo_axis_all.append(subhalo_axis)
                     # print(f[f"Snapshot_{self.snapshot}"][field])
         except Exception as e:
             print(
@@ -225,7 +251,7 @@ class TNG50TullyFisherGenerator:
             )
             return None
 
-        return data, fields
+        return data, fields, subhalo_axis_all
 
     # Need to modify this function to get particle properties
     def get_subhalo_cutout(self, subhalo_id, fields=None, particle_type="stars"):
@@ -314,12 +340,24 @@ class TNG50TullyFisherGenerator:
 
     def get_simulation_info(self):
         """Get basic information about the simulation"""
-        endpoint = ""
+        endpoint = "/snapshots/{}/".format(self.snapshot)
         sim_info = self.get_api_data(endpoint)
         if sim_info:
-            print(f"Simulation: {sim_info.get('name', 'Unknown')}")
-            print(f"Box size: {sim_info.get('boxsize', 'Unknown')} cMpc/h")
-            print(f"Number of snapshots: {sim_info.get('num_snapshots', 'Unknown')}")
+            print(f"simulation: {sim_info.get('name', 'Unknown')}")
+            # print(f"Box size: {sim_info.get('boxsize', 'Unknown')} cMpc/h")
+            # print(f"Number of snapshots: {sim_info.get('num_snapshots', 'Unknown')}")
+            print(
+                f"Redshift at snapshot {self.snapshot}: {sim_info.get('redshift', 'Unknown')}"
+            )
+            print(
+                f"Number of groups (subhalos): {sim_info.get('num_groups_subfind', 'Unknown')}"
+            )
+            print(f"Number of gas particles: {sim_info.get('num_gas', 'Unknown')}")
+            print(f"Number of star particles: {sim_info.get('num_stars', 'Unknown')}")
+
+            self.redshift = np.float64(sim_info.get("redshift"))
+            if self.snapshot == 99:
+                self.redshift = 0.0  # The TNG simulation doesn't return exactly 0.0 for snapshot 99. Force set to 0.0
         return sim_info
 
         # Eventually will replace this function with the absolute magnitude from galaxev
@@ -409,6 +447,18 @@ class TNG50TullyFisherGenerator:
         # Convert to DataFrame
         results = subhalos["results"]
 
+        if self.num_sub_files > 0:
+            supplementary_data_all = []
+            fields_all = []
+            subhalo_axis_all = []
+            for i in range(self.num_sub_files):
+                supplementary_data, fields, subhalo_axis = self.get_supplementary_data(
+                    self.sup_files[i]
+                )
+                supplementary_data_all.append(supplementary_data)
+                fields_all.append(fields)
+                subhalo_axis_all.append(subhalo_axis)
+
         # Extract comprehensive galaxy properties
         galaxy_data = []
         for i, subhalo in enumerate(results):
@@ -419,8 +469,6 @@ class TNG50TullyFisherGenerator:
             subhalo_detail = self.get_api_data(
                 f"snapshots/{self.snapshot}/subhalos/{subhalo['id']}/"
             )
-
-            supplementary_data, fields = self.get_supplementary_data()
 
             if subhalo_detail:
                 pass_mass_cut = False
@@ -648,22 +696,50 @@ class TNG50TullyFisherGenerator:
                         "CosmicTime": 13.8,  # Gyr
                     }
                     # Adding supplementary data if available
-                    if supplementary_data:
-                        for field in fields:
-                            if subhalo_id in supplementary_data["SubhaloID"]:
-                                index = np.where(
-                                    supplementary_data["SubhaloID"] == subhalo_id
-                                )[0][0]
-                                galaxy_data_single[field] = supplementary_data[field][
-                                    index
-                                ]
-                            else:
-                                galaxy_data_single[field] = np.nan
+                    if supplementary_data_all:
+                        for j in range(self.num_sub_files):
+                            data = supplementary_data_all[j]
+                            fields = fields_all[j]
+                            subhalo_axis = subhalo_axis_all[j]
+
+                            for n, field in enumerate(fields):
+                                if subhalo_id in data["SubhaloID"]:
+                                    index = np.where(data["SubhaloID"] == subhalo_id)[
+                                        0
+                                    ][0]
+
+                                    # Using np.take to select axis correpsponding to the number of subhalos
+                                    galaxy_data_single[field] = np.take(
+                                        data[field], index, axis=subhalo_axis[n]
+                                    )
+                                else:
+                                    galaxy_data_single[field] = np.nan
 
                     galaxy_data.append(galaxy_data_single)
+                else:
+                    if not pass_mass_cut:
+                        message = "Did not pass mass cut, mass = {:.2e}".format(
+                            stellar_mass
+                        )
+                    elif not pass_num_cut:
+                        message = "Did not pass num particles cut, num = {}".format(
+                            num_particles
+                        )
+                    elif not pass_subhalo_flag:
+                        message = "Subhalo is not astrophysical, flag = {}".format(flag)
+                    elif not pass_softening_cut:
+                        message = "Did not pass softening cut, R_half_star = {:.2f} kpc, R_half_gas = {:.2f} kpc".format(
+                            half_mass_rad_kpc_stars, half_mass_rad_kpc_gas
+                        )
+                    print(
+                        "Skipping subhalo {}: failed cuts, because {}".format(
+                            subhalo_id, message
+                        )
+                    )
 
         self.galaxy_data = galaxy_data
         print(f"Loaded {len(self.galaxy_data)} galaxies via API")
+        raise ValueError("Stop here for debugging")
 
         # Load particle data with more realistic approach
         self._load_particle_data_summary()
@@ -1150,10 +1226,27 @@ def main():
 
     # Get number of galaxies from command line argument or use default
 
-    n_galaxies = int(sys.argv[1])  # The number of subhalos to process
-    snapshot = int(sys.argv[2])  # Snapshot number (z=0)
-    out_dir = sys.argv[3]  # The output directory
-    supplementary_dir = sys.argv[4]  # The supplementary data directory
+    # n_galaxies = int(sys.argv[1])  # The number of subhalos to process
+    # snapshot = int(sys.argv[2])  # Snapshot number (z=0)
+    # out_dir = sys.argv[3]  # The output directory
+    # supplementary_dir = sys.argv[4]  # The supplementary data directory
+
+    config = sys.argv[1]  # Reading in the path to the config file.
+    pardict = ConfigObj(config)
+    n_galaxies = int(pardict["n_galaxies"])  # The number of subhalos to process
+    snapshot = int(pardict["snapshot"])  # Snapshot number
+    out_dir = pardict["out_dir"]  # The output directory
+    supplementary_dir = pardict["supplementary_dir"]  # The supplementary data directory
+    sup_files = pardict["sup_files"]  # The supplementary data files
+    mass_range = (
+        float(pardict["mass_low"]),
+        float(pardict["mass_high"]),
+    )
+    minimum_particles = int(pardict["min_particles"])
+
+    if len(supplementary_dir) == 0:
+        print("No supplementary directory provided, using only subhalo cutouts.")
+        sup_files = ""
 
     print("Running analysis with real TNG50 data...")
     try:
@@ -1163,15 +1256,20 @@ def main():
             print(
                 "Please get your API key from: https://www.tng-project.org/users/profile/"
             )
-            api_key = input("Enter your TNG API key: ")
+            api_key = pardict["TNG_API_KEY"]  # Or read from config file
 
         generator = TNG50TullyFisherGenerator(
             api_key=api_key,
             snapshot=snapshot,
             out_dir=out_dir,
             supplementary_dir=supplementary_dir,
+            sup_files=sup_files,
         )
-        generator.load_tng50_data(limit=n_galaxies)
+        generator.load_tng50_data(
+            limit=n_galaxies,
+            stellar_mass_range=mass_range,
+            minimum_particles=minimum_particles,
+        )
         print("\n✅ Data successfully downloaded!")
 
     except Exception as e:
