@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-TNG50 Tully-Fisher Relation Data Generation Framework
+TNG Tully-Fisher Relation Data Generation Framework
 
 This script generates multi-wavelength Tully-Fisher relation data using
-TNG50 cosmological simulation data accessed through the IllustrisTNG web API.
+TNG cosmological simulation data accessed through the IllustrisTNG web API.
 
 IMPORTANT: This uses the TNG web API - no need to download full simulation data!
 You just need to:
@@ -12,14 +12,14 @@ You just need to:
 3. Install required packages: pip install numpy scipy matplotlib pandas astropy requests
 
 Key Components:
-1. TNG50 data loading via web API
+1. TNG data loading via web API
 2. Stellar population synthesis (SPS) modeling
 3. Multi-wavelength photometry generation
 4. Kinematic analysis for rotation velocities
 5. Tully-Fisher relation construction
 
 NEW: SKIRT ExtinctionOnly Mode Integration
-6. Stellar population synthesis using age and metallicity from TNG50 stellar particles
+6. Stellar population synthesis using age and metallicity from TNG stellar particles
 7. Dust extinction calculations using gas particle data and empirical extinction laws
 8. Multi-wavelength coverage (15 broadband filters from FUV to mid-IR)
 9. Comparison between mass-based and SPS-based absolute magnitudes
@@ -71,7 +71,7 @@ warnings.filterwarnings("ignore")
 
 class TNG50TullyFisherGenerator:
     """
-    Main class for generating Tully-Fisher relation data from TNG50 simulation
+    Main class for generating Tully-Fisher relation data from TNG simulation
     Uses the TNG web API directly with requests - no additional packages needed!
     """
 
@@ -84,7 +84,7 @@ class TNG50TullyFisherGenerator:
         job_id=None,
     ):
         """
-        Initialize the TNG50 Tully-Fisher data generator
+        Initialize the TNG Tully-Fisher data generator
 
         Parameters:
         -----------
@@ -137,9 +137,26 @@ class TNG50TullyFisherGenerator:
         )
 
         # Smoothing scale of the TNG50 simulation. Will move this to user config in the future
-        self.epsilon_star = 0.288  # kpc
-        self.epsilon_gas = 0.074  # kpc
-        self.epsilon_dm = 0.288  # kpc
+        if (
+            self.simulation == "TNG50-1"
+            or self.simulation == "TNG50-2"
+            or self.simulation == "TNG50-3"
+        ):
+            self.epsilon_star = 0.288  # kpc
+            self.epsilon_gas = 0.074  # kpc
+            self.epsilon_dm = 0.288  # kpc
+        elif (
+            self.simulation == "TNG100-1"
+            or self.simulation == "TNG100-2"
+            or self.simulation == "TNG100-3"
+        ):
+            self.epsilon_star = 0.74  # kpc
+            self.epsilon_gas = 0.185  # kpc
+            self.epsilon_dm = 0.74  # kpc
+        else:
+            raise ValueError(
+                "Unsupported simulation. Please use TNG50-1, TNG50-2, TNG50-3, TNG100-1, TNG100-2, or TNG100-3."
+            )
 
         # Output and supplementary directories
         self.out_dir = pardict["out_dir"]  # The output directory
@@ -341,6 +358,33 @@ class TNG50TullyFisherGenerator:
                 f"Downloading cutout for subhalo {subhalo_id}, particle type: {particle_type}"
             )
 
+            if particle_type == "stars":
+                cutout_len = self.galaxy_data[index]["SubhaloLenStars"]
+                print(
+                    "Galaxy data catalogue states this subhalo has",
+                    self.galaxy_data[index]["SubhaloLenStars"],
+                    "star particles.",
+                )
+
+            else:
+                cutout_len = self.galaxy_data[index]["SubhaloLenGas"]
+                print(
+                    "Galaxy data catalogue states this subhalo has",
+                    self.galaxy_data[index]["SubhaloLenGas"],
+                    "gas particles.",
+                )
+
+            if cutout_len == 0:
+                # Some elliptical galaxies have no gas particles at all
+                if (
+                    particle_type == "gas"
+                    and self.pardict["galaxy_type"] == "elliptical"
+                ):
+                    data = {}
+                    for field in fields:
+                        data[field] = None
+                    return data
+
             if self.pardict["mode_load"] == "API":
                 endpoint = (
                     f"snapshots/{self.snapshot}/subhalos/{subhalo_id}/cutout.hdf5"
@@ -366,12 +410,12 @@ class TNG50TullyFisherGenerator:
                     print(f"Error reading HDF5 data for subhalo {subhalo_id}: {e}")
                     return None
             else:
-                path = (
-                    self.pardict["TNG_dir"]
-                    + f"/snap_{self.snapshot:03d}.{self.hdf5_num}.hdf5"
-                )
+                # path = (
+                #     self.pardict["TNG_dir"]
+                #     + f"/snap_{self.snapshot:03d}.{self.hdf5_num}.hdf5"
+                # )
 
-                print("Using local cutout file:", path)
+                # print("Using local cutout file:", path)
 
                 data = il.snapshot.loadSubhalo(
                     self.pardict["TNG_dir"],
@@ -380,24 +424,13 @@ class TNG50TullyFisherGenerator:
                     partType=particle_num,
                     fields=fields,
                 )
+
                 del data["count"]
 
                 for field in fields:
                     data[field] = np.array(data[field], dtype=np.float64)
 
             print("Total particles retrieved:", len(data["Coordinates"]))
-            if particle_type == "stars":
-                print(
-                    "Galaxy data catalogue states this subhalo has",
-                    self.galaxy_data[index]["SubhaloLenStars"],
-                    "star particles.",
-                )
-            else:
-                print(
-                    "Galaxy data catalogue states this subhalo has",
-                    self.galaxy_data[index]["SubhaloLenGas"],
-                    "gas particles.",
-                )
 
             data["Velocities"] = data["Velocities"] * np.sqrt(
                 self.scale_factor
@@ -440,6 +473,19 @@ class TNG50TullyFisherGenerator:
                     0.0,
                     None,
                 )  # convert scale factor to age in Gyr
+
+                wind_particle_index = np.where(data["GFM_StellarFormationTime"] <= 0.0)[
+                    0
+                ]
+
+                if len(wind_particle_index) > 0:
+                    print(
+                        "There are ",
+                        len(wind_particle_index),
+                        "wind particles in subhalo. Removing them.",
+                    )
+                    for key in data.keys():
+                        data[key] = np.delete(data[key], wind_particle_index, axis=0)
 
             # Note: This would return HDF5 data that needs special handling
             # For now, we'll use the mock data approach
@@ -535,7 +581,7 @@ class TNG50TullyFisherGenerator:
 
         tot = np.array(tot)
         num_tot = len(np.where(tot[:, 1] > 0)[0])
-        print(num_tot)
+        print(num_tot, np.sum(tot[:, 1]))
         mass_all = np.concatenate(mass_all)
         sfr_all = np.concatenate(sfr_all)
         print("Total number of subhalos:", len(mass_all))
@@ -543,6 +589,18 @@ class TNG50TullyFisherGenerator:
         print("Number of useful subhalos:", len(index_useful))
         ssfr_ridge = np.mean(sfr_all[index_useful] * 1e9 / (mass_all[index_useful]))
         print("sSFR ridge:", np.log10(ssfr_ridge))
+
+        index_mass = np.where(mass_all >= 1e9)[0]
+        print("Number of subhalos with mass > 1e9 Msun:", len(index_mass))
+        index_sfr = np.where(
+            sfr_all * 1e9 / mass_all <= 10 ** (np.log10(ssfr_ridge) - 1.0)
+        )[0]
+        print("Number of subhalos with sSFR < sSFR_ridge - 1 dex:", len(index_sfr))
+        index_quench = np.intersect1d(index_mass, index_sfr)
+        print(
+            "Number of quenched subhalos with mass > 1e9 Msun and sSFR < sSFR_ridge - 1 dex:",
+            len(index_quench),
+        )
         np.savetxt(self.pardict["out_dir"] + "/subhalo_num_per_file.txt", tot, fmt="%d")
         return tot, np.log10(ssfr_ridge)
 
@@ -609,7 +667,7 @@ class TNG50TullyFisherGenerator:
         index_local=None,
     ):
         """
-        Load TNG50 galaxy, stellar, and gas data via web API with comprehensive parameters
+        Load TNG galaxy, stellar, and gas data via web API with comprehensive parameters
 
         Parameters:
         -----------
@@ -624,7 +682,7 @@ class TNG50TullyFisherGenerator:
         """
 
         if self.pardict["mode_load"] == "API":
-            print("Loading TNG50 data via web API...")
+            print(f"Loading {self.simulation} data via web API...")
 
             # Get subhalo catalog with higher limit
             print("Fetching subhalo catalog...")
@@ -642,7 +700,7 @@ class TNG50TullyFisherGenerator:
             subhalo_loaded = False
             self.ssfr_ridge = float(self.pardict["sSFR_ridge"])
         else:
-            print("Loading TNG50 data from downloaded hdf5 files...")
+            print(f"Loading {self.simulation} data from downloaded hdf5 files...")
             # Load from local HDF5 file
             # try:
             #     index_to_hdf5_num_table = np.loadtxt(
@@ -659,7 +717,10 @@ class TNG50TullyFisherGenerator:
                 self.pardict["out_dir"] + "/subhalo_num_per_file.txt"
             )
             self.ssfr_ridge = float(self.pardict["sSFR_ridge"])
-            print("Successfully loaded subhalo_num_per_file.txt.")
+            print(
+                "Successfully loaded subhalo_num_per_file.txt. The sSFR ridge in Gyr^-1 is ",
+                self.ssfr_ridge,
+            )
 
             # Find the hdf5 number corresponding to the given index, since some of the files do not contain subhalos.
             hdf5_num = np.where(
@@ -789,6 +850,7 @@ class TNG50TullyFisherGenerator:
                     subhalo_detail["SubhaloStarMetallicity"][()]
                 )  # Star metallicity
 
+        # Loading in the supplementary data if provided
         if self.num_sub_files > 0:
             supplementary_data_all = []
             fields_all = []
@@ -833,6 +895,11 @@ class TNG50TullyFisherGenerator:
                 num_particles_stars = subhalo_detail.get("len_stars", 0)
                 num_particles_gas = subhalo_detail.get("len_gas", 0)
                 flag = subhalo_detail.get("subhaloflag", 0)
+                if subhalo_id == 0 and self.simulation == "TNG50-1":
+                    flag = 0
+                    print(
+                        "Subhalo ID is 0, TNG50-1 API has trouble downloading cutout catalogue for this galaxy, skipping this galaxy."
+                    )
                 # Calculate half-mass radius (R_eff) in kpc
                 half_mass_rad_kpc = (
                     subhalo_detail.get("halfmassrad", 0.0) * self.scale_factor / self.h
@@ -860,12 +927,33 @@ class TNG50TullyFisherGenerator:
                     pass_mass_cut = True
                 if num_particles >= minimum_particles:
                     pass_num_cut = True
-                if (
-                    half_mass_rad_kpc_stars > self.epsilon_star
-                    and half_mass_rad_kpc_gas > self.epsilon_gas
-                    and half_mass_rad_kpc_dm > self.epsilon_dm
-                ):
-                    pass_softening_cut = True
+
+                if self.pardict["galaxy_type"] == "spiral":
+                    if (
+                        half_mass_rad_kpc_stars > self.epsilon_star
+                        and half_mass_rad_kpc_gas > self.epsilon_gas
+                        and half_mass_rad_kpc_dm > self.epsilon_dm
+                    ):
+                        pass_softening_cut = True
+                elif self.pardict["galaxy_type"] == "elliptical":
+                    # elliptical galaxies only need to satisfy star and dark matter softening length criteria, it usually contains little gas.
+                    if (
+                        half_mass_rad_kpc_stars > self.epsilon_star
+                        and half_mass_rad_kpc_dm > self.epsilon_dm
+                    ):
+                        pass_softening_cut = True
+                else:
+                    raise ValueError("galaxy_type must be 'spiral' or 'elliptical'")
+
+                ssfr = (
+                    (
+                        subhalo_detail.get("sfr", 0) / stellar_mass * 1e9  # in Gyr^-1
+                    )
+                    if stellar_mass > 0
+                    else 0.0
+                )
+                V_max = subhalo_detail.get("vmax", np.nan)
+                vel_disp = subhalo_detail.get("veldisp", np.nan)
 
                 if bool(int(self.pardict["sel_cut"])):
                     if (
@@ -873,13 +961,7 @@ class TNG50TullyFisherGenerator:
                         or self.pardict["sel_params"] == "both"
                     ):
                         ssfr_flag = False
-                        ssfr = (
-                            subhalo_detail.get("sfr", 0)
-                            / stellar_mass
-                            * 1e9  # in Gyr^-1
-                            if stellar_mass > 0
-                            else 0
-                        )
+
                         if self.pardict["galaxy_type"] == "spiral":
                             if ssfr >= float(self.pardict["ssfr_cut"]):
                                 ssfr_flag = True
@@ -898,8 +980,6 @@ class TNG50TullyFisherGenerator:
                         or self.pardict["sel_params"] == "both"
                     ):
                         v_ratio_flag = False
-                        V_max = subhalo_detail.get("vmax", np.nan)
-                        vel_disp = subhalo_detail.get("veldisp", np.nan)
                         if vel_disp == 0 or np.isnan(vel_disp) or np.isnan(V_max):
                             pass
                         else:
@@ -954,7 +1034,6 @@ class TNG50TullyFisherGenerator:
                             subhalo_detail.get("pos_z", 0),
                         ]
                     )
-
                     pos = pos * self.scale_factor / self.h
 
                     # Convert comoving distance to proper distance in kpc
@@ -1075,10 +1154,10 @@ class TNG50TullyFisherGenerator:
                         # Kinematic properties
                         "SubhaloMaxCircVel": subhalo_detail.get(
                             "vmax", np.nan
-                        ),  # km/s - REAL TNG50 data
+                        ),  # km/s - REAL TNG data
                         "SubhaloVelDisp": subhalo_detail.get(
                             "veldisp", np.nan
-                        ),  # km/s - REAL TNG50 data
+                        ),  # km/s - REAL TNG data
                         # Derived properties
                         "SpecificSFR": subhalo_detail.get("sfr", 0) / stellar_mass
                         if stellar_mass > 0
@@ -1096,7 +1175,7 @@ class TNG50TullyFisherGenerator:
                         "CosmicTime": self.age_snapshot,  # Gyr
                     }
                     # Adding supplementary data if available
-                    if supplementary_data_all:
+                    if self.num_sub_files > 0:
                         for j in range(self.num_sub_files):
                             data = supplementary_data_all[j]
                             fields = fields_all[j]
@@ -1165,6 +1244,11 @@ class TNG50TullyFisherGenerator:
 
                 num_particles = num_particles_all[i]
                 flag = flag_all[i]
+                if subhalo_id == 0 and self.simulation == "TNG50-1":
+                    flag = 0
+                    print(
+                        "Subhalo ID is 0, TNG50-1 hdf5 has trouble reading in cutout catalogue for this galaxy, skipping this galaxy."
+                    )
                 # Calculate half-mass radius (R_eff) in kpc
                 half_mass_rad_kpc = half_mass_rad_kpc_all[i]
 
@@ -1178,12 +1262,30 @@ class TNG50TullyFisherGenerator:
                     pass_mass_cut = True
                 if num_particles >= minimum_particles:
                     pass_num_cut = True
-                if (
-                    half_mass_rad_kpc_stars > self.epsilon_star
-                    and half_mass_rad_kpc_gas > self.epsilon_gas
-                    and half_mass_rad_kpc_dm > self.epsilon_dm
-                ):
-                    pass_softening_cut = True
+                if self.pardict["galaxy_type"] == "spiral":
+                    if (
+                        half_mass_rad_kpc_stars > self.epsilon_star
+                        and half_mass_rad_kpc_gas > self.epsilon_gas
+                        and half_mass_rad_kpc_dm > self.epsilon_dm
+                    ):
+                        pass_softening_cut = True
+                elif self.pardict["galaxy_type"] == "elliptical":
+                    # elliptical galaxies only need to satisfy star and dark matter softening length criteria, it usually contains little gas.
+                    if (
+                        half_mass_rad_kpc_stars > self.epsilon_star
+                        and half_mass_rad_kpc_dm > self.epsilon_dm
+                    ):
+                        pass_softening_cut = True
+                else:
+                    raise ValueError("galaxy_type must be 'spiral' or 'elliptical'")
+
+                ssfr = (
+                    sfr_all[i] / stellar_mass * 1e9  # in Gyr^-1
+                    if stellar_mass > 0
+                    else 0
+                )
+                V_max = V_max_all[i]
+                vel_disp = vel_disp_all[i]
 
                 if bool(int(self.pardict["sel_cut"])):
                     if (
@@ -1191,11 +1293,6 @@ class TNG50TullyFisherGenerator:
                         or self.pardict["sel_params"] == "both"
                     ):
                         ssfr_flag = False
-                        ssfr = (
-                            sfr_all[i] / stellar_mass * 1e9  # in Gyr^-1
-                            if stellar_mass > 0
-                            else 0
-                        )
                         if self.pardict["galaxy_type"] == "spiral":
                             if ssfr >= float(self.pardict["ssfr_cut"]):
                                 ssfr_flag = True
@@ -1214,8 +1311,6 @@ class TNG50TullyFisherGenerator:
                         or self.pardict["sel_params"] == "both"
                     ):
                         v_ratio_flag = False
-                        V_max = V_max_all[i]
-                        vel_disp = vel_disp_all[i]
                         if vel_disp == 0 or np.isnan(vel_disp) or np.isnan(V_max):
                             pass
                         else:
@@ -1225,6 +1320,9 @@ class TNG50TullyFisherGenerator:
                                 ):
                                     v_ratio_flag = True
                             elif self.pardict["galaxy_type"] == "elliptical":
+                                raise ValueError(
+                                    "V_max/disp selection only valid for 'spiral' galaxy_type for now."
+                                )
                                 if V_max / vel_disp < float(
                                     self.pardict["Vmax_disp_cut"]
                                 ):
@@ -1345,8 +1443,8 @@ class TNG50TullyFisherGenerator:
                         "SubhaloHalfmassRadGas": half_mass_rad_kpc_gas,
                         "SubhaloHalfmassRadDM": half_mass_rad_kpc_dm,
                         # Kinematic properties
-                        "SubhaloMaxCircVel": V_max_all[i],  # km/s - REAL TNG50 data
-                        "SubhaloVelDisp": vel_disp_all[i],  # km/s - REAL TNG50 data
+                        "SubhaloMaxCircVel": V_max_all[i],  # km/s - REAL TNG data
+                        "SubhaloVelDisp": vel_disp_all[i],  # km/s - REAL TNG data
                         # Derived properties
                         "SpecificSFR": sfr_all[i] / stellar_mass
                         if stellar_mass > 0
@@ -1364,7 +1462,7 @@ class TNG50TullyFisherGenerator:
                         "CosmicTime": self.age_snapshot,  # Gyr
                     }
                     # Adding supplementary data if available
-                    if supplementary_data_all:
+                    if self.num_sub_files > 0:
                         for j in range(self.num_sub_files):
                             data = supplementary_data_all[j]
                             fields = fields_all[j]
@@ -1538,9 +1636,15 @@ class TNG50TullyFisherGenerator:
                 galaxy_id, fields=star_fields, particle_type="stars", index=index
             )
 
-            pass_cutout_selection, message = self.cutout_selection(
-                data_stellar=stellar_data_single, data_subhalo=galaxy, stage=1
-            )
+            if stellar_data_single is None:
+                pass_cutout_selection = False
+                message = "Error loading star particle data with illustris python. Skipping this galaxy. Check snapshot hdf5 files integrity"
+            else:
+                pass_cutout_selection, message = self.cutout_selection(
+                    data_stellar=stellar_data_single, data_subhalo=galaxy, stage=1
+                )
+
+                calculate_inclination_ellipticity = True
 
             if pass_cutout_selection is False:
                 print(
@@ -1548,6 +1652,34 @@ class TNG50TullyFisherGenerator:
                 )
                 index_fail_cut.append(index)
                 continue
+            elif (
+                np.min(
+                    np.linalg.norm(
+                        stellar_data_single["Coordinates"] - galaxy["SubhaloPos"],
+                        axis=1,
+                    )
+                )
+                > 2.0 * galaxy["SubhaloHalfmassRadStars"]
+            ):
+                print(
+                    f"Skipping galaxy ID {galaxy_id} because all star particles are beyond 2*R_half from galaxy center. This is unphysical"
+                )
+                index_fail_cut.append(index)
+                continue
+            elif gas_data_single["Coordinates"] is not None:
+                if (
+                    np.min(
+                        np.linalg.norm(
+                            gas_data_single["Coordinates"] - galaxy["SubhaloPos"],
+                            axis=1,
+                        )
+                    )
+                    > 2.0 * galaxy["SubhaloHalfmassRadStars"]
+                ):
+                    print(
+                        f"Galaxy ID {galaxy_id} has all gas particles are beyond 2*R_half from galaxy center. Will not calculate inclination and ellipticity for gas component."
+                    )
+                    calculate_inclination_ellipticity = False
 
             (
                 pos_align_star,
@@ -1567,23 +1699,39 @@ class TNG50TullyFisherGenerator:
                 method="star",
             )
 
-            (
-                pos_align_gas,
-                vel_align_gas,
-                vel_2D_align_gas,
-                pos_incline_gas,
-                vel_incline_gas,
-                vel_2D_incline_gas,
-                inclination_gas,
-                position_angle_gas,
-                axial_ratio_gas,
-                ellipticity_gas,
-                orientation_angle_gas,
-            ) = self.find_inclination_ellipticity(
-                data_gas=gas_data_single,
-                data_subhalo=self.galaxy_data[index],
-                method="gas",
-            )
+            if (
+                gas_data_single["Coordinates"] is not None
+                and calculate_inclination_ellipticity
+            ):
+                (
+                    pos_align_gas,
+                    vel_align_gas,
+                    vel_2D_align_gas,
+                    pos_incline_gas,
+                    vel_incline_gas,
+                    vel_2D_incline_gas,
+                    inclination_gas,
+                    position_angle_gas,
+                    axial_ratio_gas,
+                    ellipticity_gas,
+                    orientation_angle_gas,
+                ) = self.find_inclination_ellipticity(
+                    data_gas=gas_data_single,
+                    data_subhalo=self.galaxy_data[index],
+                    method="gas",
+                )
+            else:
+                pos_align_gas = None
+                vel_align_gas = None
+                vel_2D_align_gas = None
+                pos_incline_gas = None
+                vel_incline_gas = None
+                vel_2D_incline_gas = None
+                inclination_gas = None
+                position_angle_gas = None
+                axial_ratio_gas = None
+                ellipticity_gas = None
+                orientation_angle_gas = None
 
             # gas_SF_index = np.where(gas_data_single["StarFormationRate"] > 0)[0]
             # gas_data_SF = {
@@ -1626,6 +1774,7 @@ class TNG50TullyFisherGenerator:
                 self.galaxy_data[index]["Pos_incline_gas"] = pos_incline_gas
                 self.galaxy_data[index]["Vel_incline_gas"] = vel_incline_gas
                 self.galaxy_data[index]["Vel_2D_incline_gas"] = vel_2D_incline_gas
+
                 self.galaxy_data[index]["Pos_align_star"] = pos_align_star
                 self.galaxy_data[index]["Vel_align_star"] = vel_align_star
                 self.galaxy_data[index]["Vel_2D_align_star"] = vel_2D_align_star
@@ -1640,15 +1789,6 @@ class TNG50TullyFisherGenerator:
                 # self.galaxy_data[index]["Vel_2D_incline__SF_gas"] = (
                 #     vel_2D_incline_SF_gas
                 # )
-
-            self.galaxy_data[index]["Inclination_gas"] = inclination_gas
-            self.galaxy_data[index]["Position_Angle_gas"] = position_angle_gas
-            self.galaxy_data[index]["Mass_Axial_Ratio_gas"] = axial_ratio_gas
-            self.galaxy_data[index]["Mass_Ellipticity_gas"] = ellipticity_gas
-            self.galaxy_data[index]["Mass_Orientation_Angle_gas"] = (
-                orientation_angle_gas
-            )
-
             # self.galaxy_data[index]["Inclination_SF_gas"] = inclination_SF_gas
             # self.galaxy_data[index]["Position_Angle_SF_gas"] = position_angle_SF_gas
             # self.galaxy_data[index]["Mass_Axial_Ratio_SF_gas"] = axial_ratio_SF_gas
@@ -1663,6 +1803,13 @@ class TNG50TullyFisherGenerator:
             self.galaxy_data[index]["Mass_Ellipticity_star"] = ellipticity_star
             self.galaxy_data[index]["Mass_Orientation_Angle_star"] = (
                 orientation_angle_star
+            )
+            self.galaxy_data[index]["Inclination_gas"] = inclination_gas
+            self.galaxy_data[index]["Position_Angle_gas"] = position_angle_gas
+            self.galaxy_data[index]["Mass_Axial_Ratio_gas"] = axial_ratio_gas
+            self.galaxy_data[index]["Mass_Ellipticity_gas"] = ellipticity_gas
+            self.galaxy_data[index]["Mass_Orientation_Angle_gas"] = (
+                orientation_angle_gas
             )
 
             gas_data.append(gas_data_single)
@@ -1690,7 +1837,16 @@ class TNG50TullyFisherGenerator:
                 f"Created {len(self.stellar_data)} stellar,  {len(self.gas_data)} gas particles, and {len(self.galaxy_data)} subhalo data entries."
             )
 
-    def cutout_selection(self, data_subhalo, data_stellar=None, stage=1, band=None):
+    def cutout_selection(
+        self,
+        data_subhalo,
+        data_stellar=None,
+        stage=1,
+        band=None,
+        ssr_deV=None,
+        ssr_exp=None,
+        sersic_unc=None,
+    ):
         """
         Apply selection criteria to particle cutout data
 
@@ -1702,6 +1858,14 @@ class TNG50TullyFisherGenerator:
             Subhalo data
         stage : int
             Stage of selection (1 or 2). 1 for initial cutout with avilable TNG properties. 2 for final cutout with derived properties from galaxev.
+        ssr_sersic : float
+            Sersic fit sum of the squared residuals
+        ssr_deV : float
+            de Vaucouleurs fit sum of the squared residuals
+        ssr_exp : float
+            Exponential fit sum of the squared residuals
+        sersic_unc : float
+            Uncertainty in Sersic index fit
         Returns:
         --------
         bool : Whether the galaxy passes the selection criteria
@@ -1710,58 +1874,77 @@ class TNG50TullyFisherGenerator:
         pass_cutout_selection = False
         if stage == 1:
             # The portion of total kinetic energy in ordered rotation must be greater than 0.5
-            keppa_rotate = kinematics.KappaRotation(
-                data_stellar["Masses"],
-                data_stellar["Coordinates"]
-                - data_subhalo["SubhaloPos"],  # position relative to subhalo center
-                data_stellar["Velocities"]
-                - data_subhalo["SubhaloVel"],  # velocity relative to subhalo velocity
-                ez_range=2.0
-                * data_subhalo[
-                    "SubhaloHalfmassRadStars"
-                ],  # Only use particles within 2*R_half
-            )
-            if self.pardict["galaxy_type"] == "spiral":
-                if keppa_rotate > float(self.pardict["kappa_lim"]):
-                    pass_cutout_selection = True
-                    message = None
-                    print("Passing cutout selection, keppa_rotate =", keppa_rotate)
-                else:
-                    message = "keppa_rotate = {:.2f}".format(keppa_rotate)
-            elif self.pardict["galaxy_type"] == "elliptical":
-                # velocity = data_stellar["Velocities"] - data_subhalo["SubhaloVel"]
-                # position = data_stellar["Coordinates"] - data_subhalo["SubhaloPos"]
-                # index = np.where(
-                #     np.linalg.norm(position, axis=1)
-                #     < data_subhalo["SubhaloHalfmassRadStars"]
-                # )[0]
-                # vel_disp = np.std(velocity[index], axis=0)
-                # if (
-                #     np.any(vel_disp > float(self.pardict["v_disp_range"][0]))
-                #     and np.any(vel_disp < float(self.pardict["v_disp_range"][1]))
-                #     and keppa_rotate < float(self.pardict["kappa_lim"])
-                # ):
-                #     pass_cutout_selection = True
-                #     message = None
-                #     print(
-                #         "passing cutout selection, vel_disp =, keppa_rotate =",
-                #         vel_disp,
-                #         keppa_rotate,
-                #     )
-                # else:
-                #     message = "vel_disp = {}".format(vel_disp)
-                if keppa_rotate <= float(self.pardict["kappa_lim"]):
-                    pass_cutout_selection = True
-                    message = None
-                    print("Passing cutout selection, keppa_rotate =", keppa_rotate)
-                else:
-                    message = "keppa_rotate = {:.2f}".format(keppa_rotate)
+            try:
+                keppa_rotate = kinematics.KappaRotation(
+                    data_stellar["Masses"],
+                    data_stellar["Coordinates"]
+                    - data_subhalo["SubhaloPos"],  # position relative to subhalo center
+                    data_stellar["Velocities"]
+                    - data_subhalo[
+                        "SubhaloVel"
+                    ],  # velocity relative to subhalo velocity
+                    ez_range=2.0
+                    * data_subhalo[
+                        "SubhaloHalfmassRadStars"
+                    ],  # Only use particles within 2*R_half
+                )
+                if self.pardict["galaxy_type"] == "spiral":
+                    if keppa_rotate > float(self.pardict["kappa_lim"]):
+                        pass_cutout_selection = True
+                        message = None
+                        print("Passing cutout selection, keppa_rotate =", keppa_rotate)
+                    else:
+                        message = "keppa_rotate = {:.2f}".format(keppa_rotate)
+                elif self.pardict["galaxy_type"] == "elliptical":
+                    # velocity = data_stellar["Velocities"] - data_subhalo["SubhaloVel"]
+                    # position = data_stellar["Coordinates"] - data_subhalo["SubhaloPos"]
+                    # index = np.where(
+                    #     np.linalg.norm(position, axis=1)
+                    #     < data_subhalo["SubhaloHalfmassRadStars"]
+                    # )[0]
+                    # vel_disp = np.std(velocity[index], axis=0)
+                    # if (
+                    #     np.any(vel_disp > float(self.pardict["v_disp_range"][0]))
+                    #     and np.any(vel_disp < float(self.pardict["v_disp_range"][1]))
+                    #     and keppa_rotate < float(self.pardict["kappa_lim"])
+                    # ):
+                    #     pass_cutout_selection = True
+                    #     message = None
+                    #     print(
+                    #         "passing cutout selection, vel_disp =, keppa_rotate =",
+                    #         vel_disp,
+                    #         keppa_rotate,
+                    #     )
+                    # else:
+                    #     message = "vel_disp = {}".format(vel_disp)
+                    if keppa_rotate <= float(self.pardict["kappa_lim"]):
+                        pass_cutout_selection = True
+                        message = None
+                        print("Passing cutout selection, keppa_rotate =", keppa_rotate)
+                    else:
+                        message = "keppa_rotate = {:.2f}".format(keppa_rotate)
+            except Exception as e:
+                message = "Error calculating keppa_rotate, probably because all star particles are over 2*R_half from galaxy center. Min position is {:.2f} kpc and the stellar half mass radius is {:.2f} kpc".format(
+                    np.min(
+                        np.linalg.norm(
+                            data_stellar["Coordinates"] - data_subhalo["SubhaloPos"],
+                            axis=1,
+                        )
+                    ),
+                    data_subhalo["SubhaloHalfmassRadStars"],
+                )
 
         elif stage == 2:
             # Cutting galaxies based on the Sersic index derived from GALAXEV photometry
             if self.pardict["galaxy_type"] == "spiral":
                 sersic_band = data_subhalo["n_fit_" + band]
-                if sersic_band <= float(self.pardict["sersic_lim"]):
+                # if sersic_band <= float(self.pardict["sersic_lim"]):
+                # If the upper uncertainty bound of the sersic index is less than the limit, we accept the galaxy
+                if sersic_band + sersic_unc <= float(self.pardict["sersic_lim"]):
+                    pass_cutout_selection = True
+                    message = None
+                # In case the uncertainty is too big, if the ssr of exponential fit is better than de Vaucouleurs fit, we also accept the galaxy follow Xu et al. 2017
+                elif ssr_exp < ssr_deV:
                     pass_cutout_selection = True
                     message = None
                 else:
@@ -1769,7 +1952,11 @@ class TNG50TullyFisherGenerator:
 
             elif self.pardict["galaxy_type"] == "elliptical":
                 sersic_band = data_subhalo["n_fit_" + band]
-                if sersic_band > float(self.pardict["sersic_lim"]):
+                # if sersic_band > float(self.pardict["sersic_lim"]):
+                if sersic_band - sersic_unc > float(self.pardict["sersic_lim"]):
+                    pass_cutout_selection = True
+                    message = None
+                elif ssr_deV < ssr_exp:
                     pass_cutout_selection = True
                     message = None
                 else:
@@ -1954,19 +2141,25 @@ class TNG50TullyFisherGenerator:
         # Uncomment the following lines if you want to use star particles to calculate the angular momentum axis
         if method == "star":
             # Find and remove wind particles since they are not stars
-            wind_particle_index = np.where(
-                data_stellar["GFM_StellarFormationTime"] <= 0.0
-            )[0]
-            print("There are ", len(wind_particle_index), "wind particles in subhalo")
-            star_pos = np.delete(
-                data_stellar["Coordinates"], wind_particle_index, axis=0
-            )
-            star_vel = np.delete(
-                data_stellar["Velocities"], wind_particle_index, axis=0
-            )
+
+            # wind_particle_index = np.where(
+            #     data_stellar["GFM_StellarFormationTime"] <= 0.0
+            # )[0]
+            # print("There are ", len(wind_particle_index), "wind particles in subhalo")
+            # star_pos = np.delete(
+            #     data_stellar["Coordinates"], wind_particle_index, axis=0
+            # )
+            # star_vel = np.delete(
+            #     data_stellar["Velocities"], wind_particle_index, axis=0
+            # )
+            # mass_star = np.delete(data_stellar["Masses"], wind_particle_index, axis=0)
+            star_pos = data_stellar["Coordinates"]
+            star_vel = data_stellar["Velocities"]
+            mass_star = data_stellar["Masses"]
+
             pos = star_pos - data_subhalo["SubhaloPos"]
             vel = star_vel - data_subhalo["SubhaloVel"]
-            mass_star = np.delete(data_stellar["Masses"], wind_particle_index, axis=0)
+
             # Calculate the angular momentum axis
             axis = kinematics.AngularMomentum(
                 mass_star,
@@ -1985,6 +2178,7 @@ class TNG50TullyFisherGenerator:
             vel = gas_vel - data_subhalo["SubhaloVel"]
             mass_gas = data_gas["Masses"]
             # Calculate the angular momentum axis
+
             axis = kinematics.AngularMomentum(
                 mass_gas,
                 pos,
@@ -2290,7 +2484,7 @@ class TNG50TullyFisherGenerator:
         if len(stellar_particles) == 0:
             return None, None
 
-        # Convert formation times to ages
+        # Convert formation times to age since the Big Bang
         ages = stellar_particles["Stellar_age"]  # Gyr
 
         formation_times = self.age_snapshot - ages  # Gyr
@@ -2344,28 +2538,59 @@ class TNG50TullyFisherGenerator:
         if start_pedding and not end_pedding:
             # Pad the beginning with zeros
             binwidth = time_bins[1] - time_bins[0]
-            n_pad = int((t_start - t_1) / binwidth)
-            t_fit = np.arange(t_1, t_2, binwidth)
-            sfr_fit = np.zeros_like(t_fit)
-            sfr_fit[n_pad : n_pad + len(sfr_values)] = sfr_values
-            sfr_values = sfr_fit
-            time_bins = t_fit
+
+            t_fit_new = np.arange(t_1, t_2, binwidth)
+            t_fit_start_index = np.where(t_fit_new < t_start)[0]
+            t_fit_start = t_fit_new[t_fit_start_index]
+            if t_fit_start[-1] + binwidth / 2.0 > t_start:
+                t_fit_start = t_fit_start[:-1]
+            t_fit = np.concatenate((t_fit_start, time_bins), axis=0)
+            sfr_fit_start = np.zeros_like(t_fit_start)
+            sfr_fit = np.concatenate((sfr_fit_start, sfr_values), axis=0)
+            # t_fit = np.arange(t_1, t_2, binwidth)
+            # sfr_fit = np.zeros_like(t_fit)
+            # sfr_fit[n_pad : n_pad + len(sfr_values)] = sfr_values
+
         elif end_pedding and not start_pedding:
             # Pad the end with zeros
             binwidth = time_bins[1] - time_bins[0]
-            n_pad = int((t_2 - t_end) / binwidth)
-            t_fit = np.arange(t_1, t_2, binwidth)
-            sfr_fit = np.zeros_like(t_fit)
-            sfr_fit[: len(sfr_values)] = sfr_values
-            sfr_values = sfr_fit
-            time_bins = t_fit
+            t_fit_new = np.arange(t_1, t_2, binwidth)
+            t_fit_end_index = np.where(t_fit_new > t_end)[0]
+            t_fit_end = t_fit_new[t_fit_end_index]
+            if t_fit_end[0] - binwidth / 2.0 < t_end:
+                t_fit_end = t_fit_end[1:]
+            t_fit = np.concatenate((time_bins, t_fit_end), axis=0)
+            sfr_fit_end = np.zeros_like(t_fit_end)
+            sfr_fit = np.concatenate((sfr_values, sfr_fit_end), axis=0)
+
+            # sfr_fit = np.zeros_like(t_fit)
+            # sfr_fit[: len(sfr_values)] = sfr_values
         elif start_pedding and end_pedding:
             # Pad both the beginning and the end with zeros
             binwidth = time_bins[1] - time_bins[0]
-            t_fit = np.arange(t_1, t_2, binwidth)
-            sfr_fit = np.zeros_like(t_fit)
-            n_pad_start = int((t_start - t_1) / binwidth)
-            sfr_fit[n_pad_start : n_pad_start + len(sfr_values)] = sfr_values
+            t_fit_new = np.arange(t_1, t_2, binwidth)
+
+            t_fit_start_index = np.where(t_fit_new < t_start)[0]
+            t_fit_end_index = np.where(t_fit_new > t_end)[0]
+
+            t_fit_start = t_fit_new[t_fit_start_index]
+            t_fit_end = t_fit_new[t_fit_end_index]
+
+            if t_fit_start[-1] + binwidth / 2.0 > t_start:
+                t_fit_start = t_fit_start[:-1]
+            if t_fit_end[0] - binwidth / 2.0 < t_end:
+                t_fit_end = t_fit_end[1:]
+
+            t_fit = np.concatenate((t_fit_start, time_bins, t_fit_end), axis=0)
+
+            sfr_fit_start = np.zeros_like(t_fit_start)
+            sfr_fit_end = np.zeros_like(t_fit_end)
+
+            sfr_fit = np.concatenate((sfr_fit_start, sfr_values, sfr_fit_end), axis=0)
+
+            # sfr_fit = np.zeros_like(t_fit)
+            # n_pad_start = int((t_start - t_1) / binwidth)
+            # sfr_fit[n_pad_start : n_pad_start + len(sfr_values)] = sfr_values
 
         return t_fit, sfr_fit
 
@@ -2762,7 +2987,7 @@ class TNG50TullyFisherGenerator:
             Galaxy identifier
         """
 
-        # TNG50 does not return the characteristic star formation timescale tau directly. We will fit it to a particular model
+        # TNG does not return the characteristic star formation timescale tau directly. We will fit it to a particular model
 
         # Get stellar particles for this galaxy
         stellar_particles = self.find_particles_in_galaxy(galaxy_id, method="stars")
@@ -3055,28 +3280,9 @@ class TNG50TullyFisherGenerator:
             self.pardict["n_grid_project"]
         )  # number of grid cells along each projected axis
         galaxy_pos = galaxy_data_single["SubhaloPos"]  # kpc
-        gas_coords = gas_particles["Coordinates"]  # kpc
-        gas_masses = gas_particles["Masses"]  # Msun
-        GFM_Metals = gas_particles["GFM_Metals"][
-            :, 0
-        ]  # total hydrogen mass fraction, hydrogen is the first element
-        NeutroHydrogenAbundance = gas_particles[
-            "NeutralHydrogenAbundance"
-        ]  # fraction of neutral hydrogen
 
         # --- define grid boundaries ---
         grid_size = max_r * R_eff  # kpc
-
-        # --- project coordinates based on line-of-sight axis ---
-        if self.los_axis == 0:
-            gas_coords = gas_coords[:, [1, 2]]
-            galaxy_pos = galaxy_pos[[1, 2]]
-        elif self.los_axis == 1:
-            gas_coords = gas_coords[:, [0, 2]]
-            galaxy_pos = galaxy_pos[[0, 2]]
-        else:  # self.los_axis == 2
-            gas_coords = gas_coords[:, [0, 1]]
-            galaxy_pos = galaxy_pos[[0, 1]]
 
         x_edges = np.linspace(
             galaxy_pos[0] - grid_size, galaxy_pos[0] + grid_size, Ngrid + 1
@@ -3085,25 +3291,51 @@ class TNG50TullyFisherGenerator:
             galaxy_pos[1] - grid_size, galaxy_pos[1] + grid_size, Ngrid + 1
         )
 
-        # --- project hydrogen mass onto the 2D grid ---
-        # weighted by neutral hydrogen fraction
-        gas_mass_hist, _, _ = np.histogram2d(
-            gas_coords[:, 0],
-            gas_coords[:, 1],
-            bins=[x_edges, y_edges],
-            weights=gas_masses * GFM_Metals * NeutroHydrogenAbundance,  # Msun
-        )
+        if (
+            gas_particles["Coordinates"] is None
+            and self.pardict["galaxy_type"] == "elliptical"
+        ):
+            print(f"Galaxy ID {galaxy_id} has no gas particles.")
+            N_H_cm2 = np.zeros((Ngrid, Ngrid))
+        else:
+            gas_coords = gas_particles["Coordinates"]  # kpc
+            gas_masses = gas_particles["Masses"]  # Msun
+            GFM_Metals = gas_particles["GFM_Metals"][
+                :, 0
+            ]  # total hydrogen mass fraction, hydrogen is the first element
+            NeutroHydrogenAbundance = gas_particles[
+                "NeutralHydrogenAbundance"
+            ]  # fraction of neutral hydrogen
+            # --- project coordinates based on line-of-sight axis ---
+            if self.los_axis == 0:
+                gas_coords = gas_coords[:, [1, 2]]
+                galaxy_pos = galaxy_pos[[1, 2]]
+            elif self.los_axis == 1:
+                gas_coords = gas_coords[:, [0, 2]]
+                galaxy_pos = galaxy_pos[[0, 2]]
+            else:  # self.los_axis == 2
+                gas_coords = gas_coords[:, [0, 1]]
+                galaxy_pos = galaxy_pos[[0, 1]]
 
-        # --- compute per-pixel hydrogen mass in grams ---
-        hydrogen_mass_g = gas_mass_hist * self.Msun_to_g  # g per pixel
+            # --- project hydrogen mass onto the 2D grid ---
+            # weighted by neutral hydrogen fraction
+            gas_mass_hist, _, _ = np.histogram2d(
+                gas_coords[:, 0],
+                gas_coords[:, 1],
+                bins=[x_edges, y_edges],
+                weights=gas_masses * GFM_Metals * NeutroHydrogenAbundance,  # Msun
+            )
 
-        # --- pixel area in cm² ---
-        dx = (x_edges[-1] - x_edges[0]) / Ngrid  # kpc
-        dy = (y_edges[-1] - y_edges[0]) / Ngrid  # kpc
-        area_cm2 = np.float64(dx * dy) * np.float64(self.kpc_to_cm) ** 2  # cm²
+            # --- compute per-pixel hydrogen mass in grams ---
+            hydrogen_mass_g = gas_mass_hist * self.Msun_to_g  # g per pixel
 
-        # --- compute number column density ---
-        N_H_cm2 = hydrogen_mass_g / (area_cm2 * self.H_mass)  # cm⁻²
+            # --- pixel area in cm² ---
+            dx = (x_edges[-1] - x_edges[0]) / Ngrid  # kpc
+            dy = (y_edges[-1] - y_edges[0]) / Ngrid  # kpc
+            area_cm2 = np.float64(dx * dy) * np.float64(self.kpc_to_cm) ** 2  # cm²
+
+            # --- compute number column density ---
+            N_H_cm2 = hydrogen_mass_g / (area_cm2 * self.H_mass)  # cm⁻²
 
         return N_H_cm2, x_edges, y_edges
 
@@ -3483,9 +3715,11 @@ class TNG50TullyFisherGenerator:
 
         # Calculate surface brightness profile
         r_bins = np.linspace(
-            0, float(self.pardict["r_lim"]), int(self.pardict["n_grid_project"]) + 1
+            0,
+            float(self.pardict["r_lim"]),
+            int(self.pardict["n_grid_project"]) * 10 + 1,
         )
-        surface_brightness = np.zeros(int(self.pardict["n_grid_project"]))
+        surface_brightness = np.zeros(int(self.pardict["n_grid_project"]) * 10)
 
         # Digitize radii to get bin indices
         bin_indices = np.digitize(R, r_bins) - 1  # bins are 0-indexed
@@ -3506,41 +3740,50 @@ class TNG50TullyFisherGenerator:
         print("Fitting Sersic profile to surface brightness data...")
 
         # Fit Sersic profile to surface brightness data to estimate Sersic index
-        def sersic_profile(r, I_e, R_e, n):
+        def sersic_profile(r, I_e_log, R_e, n, y_scale=None):
             """
             Sersic profile function
 
             r : radius
-            I_e : surface brightness at effective radius
+            I_e_log : log10 of surface brightness at effective radius
             R_e : effective radius
             n : Sersic index
             Returns: surface brightness at radius r"""
             b_n = find_bn(n)
-            return I_e * np.exp(-b_n * ((r / R_e) ** (1 / n) - 1))
 
-        # # Fit the de Vaucouleurs profile (n=4) to estimate R_e and I_e
-        # def de_vaucouleurs_profile(r, I_e, R_e):
-        #     """
-        #     de Vaucouleurs profile function (Sersic n=4)
+            I_e = 10**I_e_log  # Convert log10(I_e) back to I_e
+            # Using log scale to improve numerical stability
+            return I_e * np.exp(-b_n * ((r / R_e) ** (1 / n) - 1)) / y_scale
 
-        #     r : radius
-        #     I_e : surface brightness at effective radius
-        #     R_e : effective radius
-        #     Returns: surface brightness at radius r"""
+        # Fit the de Vaucouleurs profile (n=4) to estimate R_e and I_e
+        def de_vaucouleurs_profile(r, I_e_log, R_e, y_scale=None):
+            """
+            de Vaucouleurs profile function (Sersic n=4)
 
-        #     return I_e * np.exp(-7.669 * ((r / R_e) ** (1 / 4) - 1))
+            r : radius
+            I_e_log : log10 of surface brightness at effective radius
+            R_e : effective radius
+            Returns: surface brightness at radius r"""
 
-        # # Fit the exponential profile (n=1) to estimate R_e and I_e
-        # def exponential_profile(r, I_e, R_e):
-        #     """
-        #     Exponential profile function (Sersic n=1)
+            I_e = 10**I_e_log  # Convert log10(I_e) back to I_e
 
-        #     r : radius
-        #     I_e : surface brightness at effective radius
-        #     R_e : effective radius
-        #     Returns: surface brightness at radius r"""
+            # Using log scale to improve numerical stability
+            return I_e * np.exp(-7.669 * ((r / R_e) ** (1 / 4) - 1)) / y_scale
 
-        #     return I_e * np.exp(-1.678 * ((r / R_e) - 1))
+        # Fit the exponential profile (n=1) to estimate R_e and I_e
+        def exponential_profile(r, I_e_log, R_e, y_scale=None):
+            """
+            Exponential profile function (Sersic n=1)
+
+            r : radius
+            I_e_log : log10 of surface brightness at effective radius
+            R_e : effective radius
+            Returns: surface brightness at radius r"""
+
+            I_e = 10**I_e_log  # Convert log10(I_e) back to I_e
+
+            # Using log scale to improve numerical stability
+            return I_e * np.exp(-1.678 * ((r / R_e) - 1)) / y_scale
 
         def find_bn(n):
             """
@@ -3559,6 +3802,59 @@ class TNG50TullyFisherGenerator:
                 + 131 / (1148175 * n**3)
                 - 2194697.0 / (30690717750 * n**4)
             ) * np.heaviside(n - 0.36, 0)
+
+        def plot_surface_brightness_profile(
+            r_fit,
+            surface_brightness,
+            popt_sersic,
+            popt_deV,
+            popt_exp,
+            galaxy_id,
+            band,
+        ):
+            """Plot the surface brightness profile and fitted models for visual inspection"""
+
+            plt.figure(figsize=(8, 6))
+            plt.scatter(
+                r_fit / popt_sersic[1],
+                surface_brightness,
+                label="Data",
+                color="black",
+                s=10,
+                alpha=0.7,
+            )
+            r_plot = np.linspace(0, np.max(r_fit), 500)
+            plt.plot(
+                r_plot / popt_sersic[1],
+                sersic_profile(r_plot, *popt_sersic, y_scale=1.0),
+                label="Sersic Fit, n = {:.2f}".format(popt_sersic[2]),
+                color="red",
+            )
+            plt.plot(
+                r_plot / popt_sersic[1],
+                de_vaucouleurs_profile(r_plot, *popt_deV, y_scale=1.0),
+                label="de Vaucouleurs Fit",
+                color="blue",
+                linestyle="--",
+            )
+            plt.plot(
+                r_plot / popt_sersic[1],
+                exponential_profile(r_plot, *popt_exp, y_scale=1.0),
+                label="Exponential Fit",
+                color="green",
+                linestyle=":",
+            )
+            plt.xlabel("Radius (kpc)")
+            plt.ylabel("Surface Brightness (erg/s/kpc^2)")
+            plt.xscale("log")
+            plt.yscale("log")
+            plt.xlim(0.1, 2.0)
+            plt.title(f"Galaxy ID {galaxy_id} - Band {band}")
+            plt.legend()
+            plt.savefig(
+                f"{self.out_dir}/galaxy_{galaxy_id}_surface_brightness_profile_{band}.png"
+            )
+            plt.close()
 
         # # Compare the chi-squared values between the de Vaucouleurs and the exponential fits
         # def compare_chi_squared(
@@ -3600,40 +3896,76 @@ class TNG50TullyFisherGenerator:
         fit_max = 3.0 * R_e
         valid_fit = (r_fit >= fit_min) & (r_fit <= fit_max) & (surface_brightness > 0)
 
+        print(
+            f"Fitting range: {fit_min:.3f} to {fit_max:.3f} kpc, with length {len(r_fit[valid_fit])} with orignal length {len(r_fit)}"
+        )
+
         # Find the sersic index n, effective radius R_e, and surface brightness I_e by fitting the Sersic profile
+
+        # Use the median surface brightness as the scaling factor to improve numerical stability
+        y_scale = np.median(surface_brightness[valid_fit])
+
+        sersic_profile_partial = partial(sersic_profile, y_scale=y_scale)
         bestfit, cov = curve_fit(
-            sersic_profile,
+            sersic_profile_partial,
             r_fit[valid_fit],
-            surface_brightness[valid_fit],
-            p0=[np.max(surface_brightness) * 0.5, R_e, 2.0],
+            surface_brightness[valid_fit] / y_scale,
+            p0=[np.log10(np.max(surface_brightness) * 0.5), R_e, 2.0],
             bounds=(
                 [0, 0, 0.1],
-                [np.max(surface_brightness), float(self.pardict["r_lim"]), 10.0],
+                [
+                    np.log10(np.max(surface_brightness)),
+                    float(self.pardict["r_lim"]),
+                    10.0,
+                ],
+                # [np.inf, np.inf, np.inf],
             ),  # Setting the bounds for Sersic index between 0.1 and 10, effective radius between 0 and r_lim, surface brightness positive
         )
 
-        # # Find the best-fit parameters for de Vaucouleurs (n=4) and exponential (n=1) profiles
-        # bestfit_deV, _ = curve_fit(
-        #     de_vaucouleurs_profile,
-        #     r_fit[valid_fit],
-        #     surface_brightness[valid_fit],
-        #     p0=[np.max(surface_brightness) * 0.5, R_e],
-        #     bounds=(
-        #         [0, 0],
-        #         [np.max(surface_brightness), float(self.pardict["r_lim"])],
-        #     ),
-        # )
+        sersic_residuals = (
+            surface_brightness[valid_fit]
+            - sersic_profile_partial(r_fit[valid_fit], *bestfit) * y_scale
+        )
+        ssr_sersic = np.sum(sersic_residuals**2)
 
-        # bestfit_exp, _ = curve_fit(
-        #     exponential_profile,
-        #     r_fit[valid_fit],
-        #     surface_brightness[valid_fit],
-        #     p0=[np.max(surface_brightness) * 0.5, R_e],
-        #     bounds=(
-        #         [0, 0],
-        #         [np.max(surface_brightness), r_lim],
-        #     ),
-        # )
+        # Find the best-fit parameters for de Vaucouleurs (n=4) and exponential (n=1) profiles
+        de_vaucouleurs_profile_partial = partial(
+            de_vaucouleurs_profile, y_scale=y_scale
+        )
+        bestfit_deV, _ = curve_fit(
+            de_vaucouleurs_profile_partial,
+            r_fit[valid_fit],
+            surface_brightness[valid_fit] / y_scale,
+            p0=[np.log10(np.max(surface_brightness) * 0.5), R_e],
+            bounds=(
+                [0, 0],
+                [np.log10(np.max(surface_brightness)), float(self.pardict["r_lim"])],
+            ),
+        )
+
+        de_vaucouleurs_residuals = (
+            surface_brightness[valid_fit]
+            - de_vaucouleurs_profile_partial(r_fit[valid_fit], *bestfit_deV) * y_scale
+        )
+        ssr_deV = np.sum(de_vaucouleurs_residuals**2)
+
+        exponential_profile_partial = partial(exponential_profile, y_scale=y_scale)
+        bestfit_exp, _ = curve_fit(
+            exponential_profile_partial,
+            r_fit[valid_fit],
+            surface_brightness[valid_fit] / y_scale,
+            p0=[np.log10(np.max(surface_brightness) * 0.5), R_e],
+            bounds=(
+                [0, 0],
+                [np.log10(np.max(surface_brightness)), float(self.pardict["r_lim"])],
+            ),
+        )
+
+        exponential_residuals = (
+            surface_brightness[valid_fit]
+            - exponential_profile_partial(r_fit[valid_fit], *bestfit_exp) * y_scale
+        )
+        ssr_exp = np.sum(exponential_residuals**2)
 
         # # Determine if the galaxy is elliptical based on chi-squared comparison
         # is_elliptical = compare_chi_squared(
@@ -3641,7 +3973,8 @@ class TNG50TullyFisherGenerator:
         # )
 
         # The best-fit parameters of surface brightness at the effective radius, effective radius, and Sersic index
-        I_e_fit, R_e_fit, n_fit = bestfit
+        I_e_log_fit, R_e_fit, n_fit = bestfit
+        I_e_fit = 10**I_e_log_fit  # Convert log10(I_e) back to I_e
 
         # Plot the surface brightness profile and the Sersic fit for visual inspection
         # plt.figure()
@@ -3698,8 +4031,19 @@ class TNG50TullyFisherGenerator:
         sigma_los = np.std(los_velocities)
 
         print(
-            f"Galaxy {self.galaxy_data[galaxy_id]['SubhaloID']}, Band {band}: Fitted Sersic index n = {n_fit:.2f}, Effective radius R_e = {R_e_fit:.2f} kpc, Surface brightness I_e = {I_e_fit:.2e} erg/s/kpc^2, velocity dispersion σ_los = {sigma_los:.2f} km/s"
+            f"Galaxy {self.galaxy_data[galaxy_id]['SubhaloID']}, Band {band}: Fitted Sersic index n = {n_fit:.2f} with uncertainty {cov[2, 2] ** 0.5 if cov is not None else 'N/A'}, Effective radius R_e = {R_e_fit:.2f} kpc, Surface brightness I_e = {I_e_fit:.2e} erg/s/kpc^2, velocity dispersion σ_los = {sigma_los:.2f} km/s. The ssr for the de Vaucouleurs fit is {ssr_deV:.2e}, for the exponential fit is {ssr_exp:.2e}, and for the Sersic fit is {ssr_sersic:.2e}."
         )
+
+        # plot_surface_brightness_profile(
+        #     r_fit[valid_fit],
+        #     surface_brightness[valid_fit],
+        #     bestfit,
+        #     bestfit_deV,
+        #     bestfit_exp,
+        #     self.galaxy_data[galaxy_id]["SubhaloID"],
+        #     band,
+        # )
+        # raise ValueError("Stopping after first galaxy for testing purposes.")
 
         self.galaxy_data[galaxy_id]["R_e_fit_" + band] = R_e_fit
         self.galaxy_data[galaxy_id]["I_e_fit_" + band] = I_e_fit
@@ -3721,7 +4065,12 @@ class TNG50TullyFisherGenerator:
         )  # surface brightness data used for fitting
 
         pass_cutout_selection, message = self.cutout_selection(
-            data_subhalo=self.galaxy_data[galaxy_id], stage=2, band=band
+            data_subhalo=self.galaxy_data[galaxy_id],
+            stage=2,
+            band=band,
+            ssr_deV=ssr_deV,
+            ssr_exp=ssr_exp,
+            sersic_unc=cov[2, 2] ** 0.5 if cov is not None else np.inf,
         )
 
         if pass_cutout_selection is False:
@@ -3739,12 +4088,12 @@ class TNG50TullyFisherGenerator:
         """Calculate luminosities and surface brightness profiles for all galaxies in specified bands."""
         # import time
 
+        del_index = []
         for i in range(len(self.galaxy_data)):
             print(
                 f"Calculating luminosities and surface brightness profiles for galaxy {i}..."
             )
             # start = time.time()
-            del_index = []
             self._estimate_magnitude_luminosity(i)
             for band in self.pardict["bands"]:
                 index = self.direct_effective_radius_surface_brightness_sersic_index(
@@ -3858,10 +4207,10 @@ class TNG50TullyFisherGenerator:
 
 
 def main():
-    """Main function for TNG50 Tully-Fisher analysis"""
+    """Main function for TNG Tully-Fisher analysis"""
     import sys
 
-    print("TNG50 Tully-Fisher Generator")
+    print("TNG Tully-Fisher Generator")
     print("=" * 40)
 
     # Get number of galaxies from command line argument or use default
@@ -3985,7 +4334,7 @@ def main():
         )
         minimum_particles = int(pardict["min_particles"])
 
-        print("Running analysis with real TNG50 data...")
+        print("Running analysis with real " + pardict["simulation"] + " data...")
         try:
             if pardict["mode_load"] == "API":
                 api_key = os.environ.get("TNG_API_KEY")
@@ -4004,7 +4353,11 @@ def main():
                 )
 
             generator = TNG50TullyFisherGenerator(
-                api_key=api_key, snapshot=snapshot, pardict=pardict, job_id=job_id
+                api_key=api_key,
+                snapshot=snapshot,
+                pardict=pardict,
+                job_id=job_id,
+                simulation=pardict["simulation"],
             )
 
             if pardict["mode"] == "sfh":
