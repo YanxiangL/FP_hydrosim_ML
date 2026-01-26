@@ -58,6 +58,7 @@ from scipy.special import gamma, gammainc
 from functools import partial
 import illustris_python as il
 import sys
+import copy
 
 warnings.filterwarnings("ignore")
 
@@ -1558,6 +1559,11 @@ class TNG50TullyFisherGenerator:
             #     np.array(out_list),
             # )
 
+            # # Append the descriptions to the end of the lists
+            # self.stellar_data.append(description_fields_star)
+            # self.gas_data.append(description_fields_gas)
+            # self.galaxy_data.append(field_descriptions_subhalo)
+
             np.savez(
                 f"{self.out_dir}/stellar_data_" + keyword + ".npz",
                 np.array(self.stellar_data, dtype=object),
@@ -1842,10 +1848,6 @@ class TNG50TullyFisherGenerator:
         data_subhalo,
         data_stellar=None,
         stage=1,
-        band=None,
-        ssr_deV=None,
-        ssr_exp=None,
-        sersic_unc=None,
     ):
         """
         Apply selection criteria to particle cutout data
@@ -1935,32 +1937,356 @@ class TNG50TullyFisherGenerator:
                 )
 
         elif stage == 2:
-            # Cutting galaxies based on the Sersic index derived from GALAXEV photometry
+            # Fit the sersic profile, de Vaucouleurs profile, and exponential profile to the surface brightness profile simultaneously with user specified bands
+            if not set(self.pardict["sersic_bands"]).issubset(self.pardict["bands"]):
+                raise ValueError(
+                    f"sersic_bands must be a subset of bands. "
+                    f"bands={self.pardict['bands']}, "
+                    f"sersic_bands={self.pardict['sersic_bands']}"
+                )
+
+            r_fit = []
+            SB_fit = []
+            for band in self.pardict["sersic_bands"]:
+                SB_fit.append(data_subhalo["surface_brightness_profile_" + band])
+                r_fit.append(data_subhalo["r_fit_profile_" + band])
+
+            r_fit_all = np.concatenate(r_fit)
+            SB_fit_all = np.concatenate(SB_fit)
+            y_scale_r = np.max(SB_fit[0])
+            y_scale_g = np.max(SB_fit[1])
+            y_scale_i = np.max(SB_fit[2])
+            r_end = len(SB_fit[0])
+            g_end = r_end + len(SB_fit[1])
+
+            SB_fit_all_scale = copy.deepcopy(SB_fit_all)
+
+            SB_fit_all_scale[:r_end] /= y_scale_r
+            SB_fit_all_scale[r_end:g_end] /= y_scale_g
+            SB_fit_all_scale[g_end:] /= y_scale_i
+
+            def sersic_multiband(
+                r,
+                Ie_r,
+                Ie_g,
+                Ie_i,
+                R_eff,
+                n,
+                r_end=None,
+                g_end=None,
+                y_scale_r=None,
+                y_scale_g=None,
+                y_scale_i=None,
+            ):
+                """
+                Multi-band Sersic profile model
+                Parameters:
+                -----------
+                r : array
+                    Radial distances
+                Ie_r, Ie_g, Ie_i : float
+                    Effective intensities for r, g, i bands
+                R_eff : float
+                    Effective radius
+                n : float
+                    Sersic index
+                r_end : int
+                    End index for r band
+                g_end : int
+                    End index for g band
+                y_scale_r, y_scale_g, y_scale_i : float
+                    Y-axis scaling factors for each band
+                """
+
+                log_Ir = self.sersic_profile(r[:r_end], Ie_r, R_eff, n, y_scale_r)
+                log_Ig = self.sersic_profile(r[r_end:g_end], Ie_g, R_eff, n, y_scale_g)
+                log_Ii = self.sersic_profile(r[g_end:], Ie_i, R_eff, n, y_scale_i)
+
+                return np.concatenate((log_Ir, log_Ig, log_Ii))
+
+            def exponential_multiband(
+                r,
+                Ie_r,
+                Ie_g,
+                Ie_i,
+                R_eff,
+                r_end=None,
+                g_end=None,
+                y_scale_r=None,
+                y_scale_g=None,
+                y_scale_i=None,
+            ):
+                """
+                Multi-band Exponential profile model
+                Parameters:
+                -----------
+                r : array
+                    Radial distances
+                Ie_r, Ie_g, Ie_i : float
+                    Effective intensities for r, g, i bands
+                R_eff : float
+                    Effective radius
+                r_end : int
+                    End index for r band
+                g_end : int
+                    End index for g band
+                y_scale_r, y_scale_g, y_scale_i : float
+                    Y-axis scaling factors for each band
+                """
+
+                log_Ir = self.exponential_profile(r[:r_end], Ie_r, R_eff, y_scale_r)
+                log_Ig = self.exponential_profile(
+                    r[r_end:g_end], Ie_g, R_eff, y_scale_g
+                )
+                log_Ii = self.exponential_profile(r[g_end:], Ie_i, R_eff, y_scale_i)
+
+                return np.concatenate((log_Ir, log_Ig, log_Ii))
+
+            def de_vaucouleurs_multiband(
+                r,
+                Ie_r,
+                Ie_g,
+                Ie_i,
+                R_eff,
+                r_end=None,
+                g_end=None,
+                y_scale_r=None,
+                y_scale_g=None,
+                y_scale_i=None,
+            ):
+                """
+                Multi-band de Vaucouleurs profile model
+                Parameters:
+                -----------
+                r : array
+                    Radial distances
+                Ie_r, Ie_g, Ie_i : float
+                    Effective intensities for r, g, i bands
+                R_eff : float
+                    Effective radius
+                r_end : int
+                    End index for r band
+                g_end : int
+                    End index for g band
+                y_scale_r, y_scale_g, y_scale_i : float
+                    Y-axis scaling factors for each band
+                """
+
+                log_Ir = self.de_vaucouleurs_profile(r[:r_end], Ie_r, R_eff, y_scale_r)
+                log_Ig = self.de_vaucouleurs_profile(
+                    r[r_end:g_end], Ie_g, R_eff, y_scale_g
+                )
+                log_Ii = self.de_vaucouleurs_profile(r[g_end:], Ie_i, R_eff, y_scale_i)
+
+                return np.concatenate((log_Ir, log_Ig, log_Ii))
+
+            sersic_multiband_partial = partial(
+                sersic_multiband,
+                r_end=r_end,
+                g_end=g_end,
+                y_scale_r=y_scale_r,
+                y_scale_g=y_scale_g,
+                y_scale_i=y_scale_i,
+            )
+
+            exponential_multiband_partial = partial(
+                exponential_multiband,
+                r_end=r_end,
+                g_end=g_end,
+                y_scale_r=y_scale_r,
+                y_scale_g=y_scale_g,
+                y_scale_i=y_scale_i,
+            )
+
+            de_vaucouleurs_multiband_partial = partial(
+                de_vaucouleurs_multiband,
+                r_end=r_end,
+                g_end=g_end,
+                y_scale_r=y_scale_r,
+                y_scale_g=y_scale_g,
+                y_scale_i=y_scale_i,
+            )
+
+            R_eff_guess = 0.5 * (
+                np.min([np.min(r_fit[0]), np.min(r_fit[1]), np.min(r_fit[2])])
+                + np.max([np.max(r_fit[0]), np.max(r_fit[1]), np.max(r_fit[2])])
+            )
+
+            bestfit, cov = curve_fit(
+                sersic_multiband_partial,
+                r_fit_all,
+                # surface_brightness[valid_fit] / y_scale,
+                np.log10(SB_fit_all_scale),
+                p0=[
+                    np.log10(y_scale_r * 0.5),
+                    np.log10(y_scale_g * 0.5),
+                    np.log10(y_scale_i * 0.5),
+                    R_eff_guess,
+                    2.0,
+                ],
+                bounds=(
+                    [
+                        0,
+                        0,
+                        0,
+                        np.min([np.min(r_fit[0]), np.min(r_fit[1]), np.min(r_fit[2])]),
+                        0.1,
+                    ],
+                    [
+                        np.log10(y_scale_r),
+                        np.log10(y_scale_g),
+                        np.log10(y_scale_i),
+                        np.max([np.max(r_fit[0]), np.max(r_fit[1]), np.max(r_fit[2])]),
+                        10.0,
+                    ],
+                    # [np.inf, np.inf, np.inf],
+                ),  # Setting the bounds for Sersic index between 0.1 and 10, effective radius between 0 and r_lim, surface brightness positive
+            )
+
+            # sersic_residuals = (
+            #     surface_brightness[valid_fit]
+            #     - sersic_profile_partial(r_fit[valid_fit], *bestfit) * y_scale
+            # )
+            sersic_residuals = np.log10(SB_fit_all_scale) - sersic_multiband_partial(
+                r_fit_all, *bestfit
+            )
+            ssr_sersic = np.sum(sersic_residuals**2)
+            chi2_red = ssr_sersic / (len(r_fit_all) - len(bestfit))
+            cov = cov * chi2_red  # Scale covariance matrix by reduced chi-squared
+
+            Ie_r, Ie_g, Ie_i, R_eff, n_sersic = bestfit
+            Ie_r_unc, Ie_g_unc, Ie_i_unc, R_eff_unc, n_sersic_unc = np.sqrt(
+                np.diag(cov)
+            )
+
+            # Find the best-fit parameters for de Vaucouleurs (n=4) and exponential (n=1) profiles
+            bestfit_deV, _ = curve_fit(
+                de_vaucouleurs_multiband_partial,
+                r_fit_all,
+                # surface_brightness[valid_fit] / y_scale,
+                np.log10(SB_fit_all_scale),
+                p0=[
+                    np.log10(y_scale_r * 0.5),
+                    np.log10(y_scale_g * 0.5),
+                    np.log10(y_scale_i * 0.5),
+                    R_eff_guess,
+                ],
+                bounds=(
+                    [
+                        0,
+                        0,
+                        0,
+                        np.min([np.min(r_fit[0]), np.min(r_fit[1]), np.min(r_fit[2])]),
+                    ],
+                    [
+                        np.log10(y_scale_r),
+                        np.log10(y_scale_g),
+                        np.log10(y_scale_i),
+                        np.max([np.max(r_fit[0]), np.max(r_fit[1]), np.max(r_fit[2])]),
+                    ],
+                ),
+            )
+
+            # de_vaucouleurs_residuals = (
+            #     surface_brightness[valid_fit]
+            #     - de_vaucouleurs_profile_partial(r_fit[valid_fit], *bestfit_deV) * y_scale
+            # )
+            de_vaucouleurs_residuals = np.log10(
+                SB_fit_all_scale
+            ) - de_vaucouleurs_multiband_partial(r_fit_all, *bestfit_deV)
+            ssr_deV = np.sum(de_vaucouleurs_residuals**2)
+
+            bestfit_exp, _ = curve_fit(
+                exponential_multiband_partial,
+                r_fit_all,
+                # surface_brightness[valid_fit] / y_scale,
+                np.log10(SB_fit_all_scale),
+                p0=[
+                    np.log10(y_scale_r * 0.5),
+                    np.log10(y_scale_g * 0.5),
+                    np.log10(y_scale_i * 0.5),
+                    R_eff_guess,
+                ],
+                bounds=(
+                    [
+                        0,
+                        0,
+                        0,
+                        np.min([np.min(r_fit[0]), np.min(r_fit[1]), np.min(r_fit[2])]),
+                    ],
+                    [
+                        np.log10(y_scale_r),
+                        np.log10(y_scale_g),
+                        np.log10(y_scale_i),
+                        np.max([np.max(r_fit[0]), np.max(r_fit[1]), np.max(r_fit[2])]),
+                    ],
+                ),
+            )
+
+            # exponential_residuals = (
+            #     surface_brightness[valid_fit]
+            #     - exponential_profile_partial(r_fit[valid_fit], *bestfit_exp) * y_scale
+            # )
+            exponential_residuals = np.log10(
+                SB_fit_all_scale
+            ) - exponential_multiband_partial(r_fit_all, *bestfit_exp)
+            ssr_exp = np.sum(exponential_residuals**2)
+
+            data_subhalo["sersic_n"] = n_sersic
+            data_subhalo["sersic_n_unc"] = n_sersic_unc
+            data_subhalo["R_eff_sersic"] = R_eff
+            data_subhalo["R_eff_sersic_unc"] = R_eff_unc
+
+            print(
+                "The best-fit R_eff over r, g, i bands are {:.2f} +/- {:.2f} kpc".format(
+                    R_eff, R_eff_unc
+                )
+            )
+
             if self.pardict["galaxy_type"] == "spiral":
-                sersic_band = data_subhalo["n_fit_" + band]
-                # if sersic_band <= float(self.pardict["sersic_lim"]):
-                # If the upper uncertainty bound of the sersic index is less than the limit, we accept the galaxy
-                if sersic_band + sersic_unc <= float(self.pardict["sersic_lim"]):
+                if n_sersic + n_sersic_unc < float(self.pardict["sersic_lim"]):
                     pass_cutout_selection = True
                     message = None
-                # In case the uncertainty is too big, if the ssr of exponential fit is better than de Vaucouleurs fit, we also accept the galaxy follow Xu et al. 2017
+                    print(
+                        "Passing cutout selection, n_sersic = {:.2f} +/- {:.2f}".format(
+                            n_sersic, n_sersic_unc
+                        )
+                    )
                 elif ssr_exp < ssr_deV:
                     pass_cutout_selection = True
                     message = None
+                    print(
+                        "Passing cutout selection, ssr_exp = {:.2f} < ssr_deV = {:.2f}".format(
+                            ssr_exp, ssr_deV
+                        )
+                    )
                 else:
-                    message = "Sersic_n = {:.2f}".format(data_subhalo["n_fit_" + band])
+                    message = "Did not pass selection cut based on galaxy type and selection parameters. ssr_exp = {:.2f}, ssr_deV = {:.2f}, sersic_n = {:.2f} +/- {:.2f}".format(
+                        ssr_exp, ssr_deV, n_sersic, n_sersic_unc
+                    )
 
             elif self.pardict["galaxy_type"] == "elliptical":
-                sersic_band = data_subhalo["n_fit_" + band]
-                # if sersic_band > float(self.pardict["sersic_lim"]):
-                if sersic_band - sersic_unc > float(self.pardict["sersic_lim"]):
+                if n_sersic - n_sersic_unc > float(self.pardict["sersic_lim"]):
                     pass_cutout_selection = True
                     message = None
+                    print(
+                        "Passing cutout selection, n_sersic = {:.2f} +/- {:.2f}".format(
+                            n_sersic, n_sersic_unc
+                        )
+                    )
                 elif ssr_deV < ssr_exp:
                     pass_cutout_selection = True
                     message = None
+                    print(
+                        "Passing cutout selection, ssr_deV = {:.2f} < ssr_exp = {:.2f}".format(
+                            ssr_deV, ssr_exp
+                        )
+                    )
                 else:
-                    message = "Sersic_n = {:.2f}".format(data_subhalo["n_fit_" + band])
+                    message = "Did not pass selection cut based on galaxy type and selection parameters. ssr_deV = {:.2f}, ssr_exp = {:.2f}, sersic_n = {:.2f} +/- {:.2f}".format(
+                        ssr_deV, ssr_exp, n_sersic, n_sersic_unc
+                    )
+
         else:
             raise ValueError("stage must be 1 or 2")
 
@@ -2031,13 +2357,22 @@ class TNG50TullyFisherGenerator:
                 "arr_0"
             ].tolist()
 
-        # self.galaxy_data, self.stellar_data, self.gas_data = np.load(
-        #     "../plots/output_54.npz", allow_pickle=True
-        # )["arr_0"].tolist()
+        # # The last entry is the description dictionary, remove it
+        # if (
+        #     isinstance(self.galaxy_data, list)
+        #     and isinstance(self.stellar_data, list)
+        #     and isinstance(self.gas_data, list)
+        # ):
+        #     if "Description" in self.galaxy_data[-1].keys():
+        #         self.galaxy_data = self.galaxy_data[:-1]
+        #     if "Description" in self.stellar_data[-1].keys():
+        #         self.stellar_data = self.stellar_data[:-1]
+        #     if "Description" in self.gas_data[-1].keys():
+        #         self.gas_data = self.gas_data[:-1]
 
-        # self.galaxy_data = [self.galaxy_data]
-        # self.stellar_data = [self.stellar_data]
-        # self.gas_data = [self.gas_data]
+        #     print('Remove the "Description" entry from the loaded data lists.')
+        # else:
+        #     raise ValueError("Loaded data is not in the expected list format.")
 
         print(
             f"Loaded {len(self.galaxy_data)} galaxies, {len(self.stellar_data)} stellar datasets, and {len(self.gas_data)} gas datasets."
@@ -2875,7 +3210,7 @@ class TNG50TullyFisherGenerator:
                             getattr(self, "mag_grid_" + band + "_custom_sfh_" + str(i)),
                             bounds_error=True,
                             fill_value=None,
-                            method="cubic",
+                            method="linear",
                         )
                     )
                     self.lum_interpolators[band + "_custom_sfh_" + str(i)] = (
@@ -2884,7 +3219,7 @@ class TNG50TullyFisherGenerator:
                             getattr(self, "lum_grid_" + band + "_custom_sfh_" + str(i)),
                             bounds_error=True,
                             fill_value=None,
-                            method="cubic",
+                            method="linear",
                         )
                     )
 
@@ -2942,24 +3277,6 @@ class TNG50TullyFisherGenerator:
         )
 
         age_bins, sfr_values = self.pad_sfh(age_bins, sfr_values)
-
-        # if len(age_bins) >= 255:
-        #     age_bins_new = np.linspace(age_bins[0], age_bins[-1], 254)
-        #     sfr_values_new = np.interp(age_bins_new, age_bins, sfr_values)
-        #     age_bins = age_bins_new
-        #     sfr_values = sfr_values_new
-        #     print(
-        #         "Age bins and SFR values have been resampled to 254 bins for galaxy id {}. Otherwise galaxev will complain the sed array is too long.".format(
-        #             self.galaxy_data[galaxy_id]["SubhaloID"]
-        #         )
-        #     )
-
-        # if age_bins is None or sfr_values is None:
-        #     self.galaxy_data[stellar_particles_index]["SFH_age_bins"] = np.nan
-        #     self.galaxy_data[stellar_particles_index]["SFH_sfr"] = np.nan
-        # else:
-        #     self.galaxy_data[stellar_particles_index]["SFH_age_bins"] = age_bins
-        #     self.galaxy_data[stellar_particles_index]["SFH_sfr"] = sfr_values
 
         # Convert age bins to years and SFR to Msun/yr
         age_bins_yr = age_bins * 1e9  # years
@@ -3022,6 +3339,8 @@ class TNG50TullyFisherGenerator:
                 np.nextafter(galaxev_metalicity_limit[0], np.inf),
                 np.nextafter(galaxev_metalicity_limit[1], -np.inf),
             )  # The nextafter is to avoid hitting the exact bound which may cause issues with the interpolator
+        else:
+            metallicities = metallicities_org
 
         def find_magnitude_luminosity_in_band(
             nu_filter,
@@ -3254,7 +3573,7 @@ class TNG50TullyFisherGenerator:
     def hydrogen_column_density(self, galaxy_id):
         """
         Calculate hydrogen column density N_H (cm⁻²) within a given number of grid cells that cover the galaxy.
-        Assuming the line-of-sight is along the z-axis. Will update it later to abitrary direction
+        The line-of-sight axis can be specified.
 
         Parameters
         ----------
@@ -3580,6 +3899,73 @@ class TNG50TullyFisherGenerator:
 
         return lambda_tau_scatter
 
+    # Fit Sersic profile to surface brightness data to estimate Sersic index
+    def sersic_profile(self, r, I_e_log, R_e, n, y_scale=None):
+        """
+        Sersic profile function
+
+        r : radius
+        I_e_log : log10 of surface brightness at effective radius
+        R_e : effective radius
+        n : Sersic index
+        Returns: surface brightness at radius r"""
+        b_n = self.find_bn(n)
+
+        I_e = 10**I_e_log  # Convert log10(I_e) back to I_e
+        # Using log scale to improve numerical stability
+        # return I_e * np.exp(-b_n * ((r / R_e) ** (1 / n) - 1)) / y_scale
+        return np.log10(I_e * np.exp(-b_n * ((r / R_e) ** (1 / n) - 1)) / y_scale)
+
+    # Fit the de Vaucouleurs profile (n=4) to estimate R_e and I_e
+    def de_vaucouleurs_profile(self, r, I_e_log, R_e, y_scale=None):
+        """
+        de Vaucouleurs profile function (Sersic n=4)
+
+        r : radius
+        I_e_log : log10 of surface brightness at effective radius
+        R_e : effective radius
+        Returns: surface brightness at radius r"""
+
+        I_e = 10**I_e_log  # Convert log10(I_e) back to I_e
+
+        # Using log scale to improve numerical stability
+        # return I_e * np.exp(-7.669 * ((r / R_e) ** (1 / 4) - 1)) / y_scale
+        return np.log10(I_e * np.exp(-7.669 * ((r / R_e) ** (1 / 4) - 1)) / y_scale)
+
+    # Fit the exponential profile (n=1) to estimate R_e and I_e
+    def exponential_profile(self, r, I_e_log, R_e, y_scale=None):
+        """
+        Exponential profile function (Sersic n=1)
+
+        r : radius
+        I_e_log : log10 of surface brightness at effective radius
+        R_e : effective radius
+        Returns: surface brightness at radius r"""
+
+        I_e = 10**I_e_log  # Convert log10(I_e) back to I_e
+
+        # Using log scale to improve numerical stability
+        # return I_e * np.exp(-1.678 * ((r / R_e) - 1)) / y_scale
+        return np.log10(I_e * np.exp(-1.678 * ((r / R_e) - 1)) / y_scale)
+
+    def find_bn(self, n):
+        """
+        Approximate b_n for given Sersic index n with https://arxiv.org/pdf/astro-ph/0208404
+
+        n: Sersic index
+        Returns: b_n
+        """
+        return (
+            0.01945 - 0.8902 * n + 10.95 * n**2 - 19.67 * n**3 + 13.43 * n**4
+        ) * np.heaviside(0.36 - n, 1) + (
+            2 * n
+            - 1 / 3
+            + 4.0 / (405 * n)
+            + 46.0 / (25515 * n**2)
+            + 131 / (1148175 * n**3)
+            - 2194697.0 / (30690717750 * n**4)
+        ) * np.heaviside(n - 0.36, 0)
+
     def direct_effective_radius_surface_brightness_sersic_index(
         self,
         galaxy_id,
@@ -3624,26 +4010,6 @@ class TNG50TullyFisherGenerator:
 
         particles = self.find_particles_in_galaxy(galaxy_id, method=method)
 
-        print(
-            np.min(particles["Coordinates"][:, 0]),
-            np.max(particles["Coordinates"][:, 0]),
-        )
-        print(
-            np.min(particles["Coordinates"][:, 1]),
-            np.max(particles["Coordinates"][:, 1]),
-        )
-        print(
-            np.min(particles["Coordinates"][:, 2]),
-            np.max(particles["Coordinates"][:, 2]),
-        )
-
-        # # --- project coordinates based on line-of-sight axis ---
-        # if self.los_axis == 0:
-        #     particle_coords = particles["Coordinates"][:, [1, 2]]
-        # elif self.los_axis == 1:
-        #     particle_coords = particles["Coordinates"][:, [0, 2]]
-        # else:  # self.los_axis == 2
-        #     particle_coords = particles["Coordinates"][:, [0, 1]]
         particle_coords = self.project_coordinates(particles=particles)
 
         axial_ratios, orientation_angles, rel_pos = (
@@ -3675,21 +4041,35 @@ class TNG50TullyFisherGenerator:
         # Apply radial limit
         within_limit = r_geo <= float(self.pardict["r_lim"])
         r_geo = r_geo[within_limit]
-        observed_luminosity = particles["Dusted_Luminosity_" + band][within_limit]
 
-        # Sort by elliptical radius
+        print("Number of particles within r_lim:", len(r_geo))
+        print(
+            "Original number of particles:", len(particles["Dusted_Luminosity_" + band])
+        )
+        observed_luminosity = particles["Dusted_Luminosity_" + band][within_limit]
         idx = np.argsort(r_geo)
         r_sorted = r_geo[idx]
         L_sorted = observed_luminosity[idx]
+
+        # within_limit = r_ell <= float(self.pardict["r_lim"])
+        # r_ell_within_limit = r_ell[within_limit]
+        # observed_luminosity = particles["Dusted_Luminosity_" + band][within_limit]
+
+        # # Sort by elliptical radius
+        # idx = np.argsort(r_ell_within_limit)
+        # r_sorted = r_ell_within_limit[idx]
+        # L_sorted = observed_luminosity[idx]
 
         # Compute cumulative luminosity profile
         Lcum = np.cumsum(L_sorted)
         Lhalf = 0.5 * np.sum(observed_luminosity)
 
+        # print(Lcum, np.sum(observed_luminosity), Lhalf)
+
         # Find radius enclosing half the light (semi-major axis a_e)
 
         if q <= 0.01:
-            print("This galaxy has a very elongated shape, cannot compute a_e.")
+            print("This galaxy has a very elongated shape, cannot compute R_e.")
             print(
                 "The axial ratio (b/a), orientation angle, min, max of x_rot, min, max of y_rot, min, max of r_ell:",
                 q,
@@ -3703,105 +4083,149 @@ class TNG50TullyFisherGenerator:
             )
             return galaxy_id
         else:
-            a_e = np.interp(Lhalf, Lcum, r_sorted)
+            #     a_e = np.interp(Lhalf, Lcum, r_sorted)
 
-        b_e = q * a_e
+            R_e = np.interp(Lhalf, Lcum, r_sorted)
 
-        # Geometric mean, the direct effective radius in Xu+2017
-        R_e = np.sqrt(a_e * b_e)
+            # print(np.sum(L_sorted[r_sorted <= R_e]), Lhalf)
+
+        # b_e = q * a_e
+
+        # # Geometric mean, the direct effective radius in Xu+2017
+        # R_e = np.sqrt(a_e * b_e)
+
+        print("Direct effective radius R_e (kpc):", R_e)
+        print(
+            "Half-mass radius:",
+            self.galaxy_data[galaxy_id]["SubhaloHalfmassRadStars"],
+            "kpc",
+        )
 
         # using the Sersic profile fitting method from Xu+2017 to estimate Sersic index
-        R = r_sorted  # approximate circularized radius
+        # R = r_sorted  # circularized radius
+
+        # Follow Xu+2017 and fit only the binned radial profile between 0.05*R_e and 3.0*R_e
+        # fit_min = 0.05 * R_e
+        # fit_max = 3.0 * R_e
+
+        # Use Lu+2020 to fit between 0.05 R_hsm to 3.0 R_hsm
+        R_hsm = self.galaxy_data[galaxy_id]["SubhaloHalfmassRadStars"]
+        fit_min = 0.05 * R_hsm
+        fit_max = 3.0 * R_hsm
+
+        R = r_sorted[
+            np.where((r_sorted < fit_max) & (r_sorted > fit_min))[0]
+        ]  # only consider radii within 3*R_e
+
+        L = L_sorted[
+            np.where((r_sorted < fit_max) & (r_sorted > fit_min))[0]
+        ]  # corresponding luminosities
 
         # Calculate surface brightness profile
-        r_bins = np.linspace(
-            0,
-            float(self.pardict["r_lim"]),
-            int(self.pardict["n_grid_project"]) * 10 + 1,
+        # r_bins = np.linspace(
+        #     0,
+        #     3.0 * R_e,
+        #     int(self.pardict["n_grid_project"]) + 1,
+        # )
+
+        # n_bins = int(self.pardict["n_grid_project"])
+        n_bins = 50
+
+        r_bins = np.logspace(
+            np.log10(fit_min),
+            np.log10(fit_max),
+            n_bins + 1,
+            # 21,
         )
-        surface_brightness = np.zeros(int(self.pardict["n_grid_project"]) * 10)
 
-        # Digitize radii to get bin indices
-        bin_indices = np.digitize(R, r_bins) - 1  # bins are 0-indexed
+        def tsc_1d(R, L, r_bins):
+            """
+            1D Triangular-Shaped-Cloud (TSC) surface brightness profile.
 
-        # Total luminosity per bin (vectorized)
-        Lsum_per_bin = np.bincount(
-            bin_indices, weights=L_sorted, minlength=len(r_bins) - 1
-        )
+            Parameters
+            ----------
+            R : array_like
+                Circularized radii of particles (kpc or same units as r_bins)
+            L : array_like
+                Particle luminosities
+            r_bins : array_like
+                Bin edges (length n_bins + 1)
 
-        # Area per bin (elliptical annulus)
-        area = np.pi * q * (r_bins[1:] ** 2 - r_bins[:-1] ** 2)
+            Returns
+            -------
+            SB : ndarray
+                Surface brightness in each bin (length n_bins)
+            area : ndarray
+                Area of each radial annulus (length n_bins)
+            """
+            R = np.asarray(R)
+            L = np.asarray(L)
+            n_bins = len(r_bins) - 1
+            SB = np.zeros(n_bins)
 
-        # Surface brightness (avoid division by zero)
-        surface_brightness = np.zeros_like(area)
-        valid = area > 0
-        surface_brightness[valid] = Lsum_per_bin[valid] / area[valid]
+            # Compute bin width
+            dr = r_bins[1:] - r_bins[:-1]  # length n_bins
+
+            # Compute bin centers
+            r_centers = 0.5 * (r_bins[:-1] + r_bins[1:])
+
+            # For each particle, find closest bin center
+            # Use searchsorted to find the bin to the right
+            bin_idx_right = np.searchsorted(r_centers, R)
+            # Clip to valid range
+            bin_idx_right = np.clip(bin_idx_right, 0, n_bins - 1)
+            # Left and right neighbor bins for TSC
+            bin_idx_left = np.clip(bin_idx_right - 1, 0, n_bins - 1)
+            bin_idx_center = bin_idx_right
+
+            # Compute normalized distance to center of central bin
+            dx = (R - r_centers[bin_idx_center]) / dr[bin_idx_center]
+
+            # TSC weights (quadratic)
+            w_center = 0.75 - dx**2
+            w_left = 0.5 * (0.5 - dx) ** 2
+            w_right = 0.5 * (0.5 + dx) ** 2
+
+            # Accumulate luminosity to three bins
+            np.add.at(SB, bin_idx_center, L * w_center)
+            np.add.at(SB, bin_idx_left, L * w_left)
+            # Avoid double-counting if center == right edge
+            bin_idx_right_shifted = np.clip(bin_idx_center + 1, 0, n_bins - 1)
+            np.add.at(SB, bin_idx_right_shifted, L * w_right)
+
+            # Compute area of each annulus
+            area = np.pi * (r_bins[1:] ** 2 - r_bins[:-1] ** 2)
+
+            if np.abs(np.sum(SB) - np.sum(L)) / np.sum(L) > 1e-3:
+                raise ValueError("TSC binning error: total luminosity mismatch.")
+
+            # Surface brightness
+            SB /= area
+
+            return SB, area
+
+        surface_brightness, area = tsc_1d(R, L, r_bins)
+
+        # surface_brightness = np.zeros(int(n_bins))
+        # # surface_brightness = np.zeros(20)
+
+        # # Digitize radii to get bin indices
+        # bin_indices = np.digitize(R, r_bins, right=True) - 1  # bins are 0-indexed
+
+        # # Total luminosity per bin (vectorized)
+        # Lsum_per_bin = np.bincount(bin_indices, weights=L, minlength=len(r_bins) - 1)
+
+        # # Area per bin (elliptical annulus)
+        # # area = np.pi * q * (r_bins[1:] ** 2 - r_bins[:-1] ** 2)
+        # area = np.pi * (r_bins[1:] ** 2 - r_bins[:-1] ** 2)
+
+        # # Surface brightness (avoid division by zero)
+        # surface_brightness = np.zeros_like(area)
+        # valid = area > 0
+
+        # surface_brightness[valid] = Lsum_per_bin[valid] / area[valid]
 
         print("Fitting Sersic profile to surface brightness data...")
-
-        # Fit Sersic profile to surface brightness data to estimate Sersic index
-        def sersic_profile(r, I_e_log, R_e, n, y_scale=None):
-            """
-            Sersic profile function
-
-            r : radius
-            I_e_log : log10 of surface brightness at effective radius
-            R_e : effective radius
-            n : Sersic index
-            Returns: surface brightness at radius r"""
-            b_n = find_bn(n)
-
-            I_e = 10**I_e_log  # Convert log10(I_e) back to I_e
-            # Using log scale to improve numerical stability
-            return I_e * np.exp(-b_n * ((r / R_e) ** (1 / n) - 1)) / y_scale
-
-        # Fit the de Vaucouleurs profile (n=4) to estimate R_e and I_e
-        def de_vaucouleurs_profile(r, I_e_log, R_e, y_scale=None):
-            """
-            de Vaucouleurs profile function (Sersic n=4)
-
-            r : radius
-            I_e_log : log10 of surface brightness at effective radius
-            R_e : effective radius
-            Returns: surface brightness at radius r"""
-
-            I_e = 10**I_e_log  # Convert log10(I_e) back to I_e
-
-            # Using log scale to improve numerical stability
-            return I_e * np.exp(-7.669 * ((r / R_e) ** (1 / 4) - 1)) / y_scale
-
-        # Fit the exponential profile (n=1) to estimate R_e and I_e
-        def exponential_profile(r, I_e_log, R_e, y_scale=None):
-            """
-            Exponential profile function (Sersic n=1)
-
-            r : radius
-            I_e_log : log10 of surface brightness at effective radius
-            R_e : effective radius
-            Returns: surface brightness at radius r"""
-
-            I_e = 10**I_e_log  # Convert log10(I_e) back to I_e
-
-            # Using log scale to improve numerical stability
-            return I_e * np.exp(-1.678 * ((r / R_e) - 1)) / y_scale
-
-        def find_bn(n):
-            """
-            Approximate b_n for given Sersic index n with https://arxiv.org/pdf/astro-ph/0208404
-
-            n: Sersic index
-            Returns: b_n
-            """
-            return (
-                0.01945 - 0.8902 * n + 10.95 * n**2 - 19.67 * n**3 + 13.43 * n**4
-            ) * np.heaviside(0.36 - n, 1) + (
-                2 * n
-                - 1 / 3
-                + 4.0 / (405 * n)
-                + 46.0 / (25515 * n**2)
-                + 131 / (1148175 * n**3)
-                - 2194697.0 / (30690717750 * n**4)
-            ) * np.heaviside(n - 0.36, 0)
 
         def plot_surface_brightness_profile(
             r_fit,
@@ -3826,74 +4250,40 @@ class TNG50TullyFisherGenerator:
             r_plot = np.linspace(0, np.max(r_fit), 500)
             plt.plot(
                 r_plot / popt_sersic[1],
-                sersic_profile(r_plot, *popt_sersic, y_scale=1.0),
+                10 ** self.sersic_profile(r_plot, *popt_sersic, y_scale=1.0),
                 label="Sersic Fit, n = {:.2f}".format(popt_sersic[2]),
                 color="red",
             )
             plt.plot(
                 r_plot / popt_sersic[1],
-                de_vaucouleurs_profile(r_plot, *popt_deV, y_scale=1.0),
+                10 ** self.de_vaucouleurs_profile(r_plot, *popt_deV, y_scale=1.0),
                 label="de Vaucouleurs Fit",
                 color="blue",
                 linestyle="--",
             )
             plt.plot(
                 r_plot / popt_sersic[1],
-                exponential_profile(r_plot, *popt_exp, y_scale=1.0),
+                10 ** self.exponential_profile(r_plot, *popt_exp, y_scale=1.0),
                 label="Exponential Fit",
                 color="green",
                 linestyle=":",
             )
-            plt.xlabel("Radius (kpc)")
+            plt.xlabel("R/R_eff (kpc)")
             plt.ylabel("Surface Brightness (erg/s/kpc^2)")
             plt.xscale("log")
             plt.yscale("log")
-            plt.xlim(0.1, 2.0)
+            plt.xlim(0.1, 1.5)
             plt.title(f"Galaxy ID {galaxy_id} - Band {band}")
             plt.legend()
             plt.savefig(
-                f"{self.out_dir}/galaxy_{galaxy_id}_surface_brightness_profile_{band}.png"
+                f"{self.out_dir}/galaxy_{galaxy_id}_surface_brightness_profile_{band}.png",
+                dpi=150,
             )
             plt.close()
-
-        # # Compare the chi-squared values between the de Vaucouleurs and the exponential fits
-        # def compare_chi_squared(
-        #     popt_deV, popt_exp, r_fit, surface_brightness, valid_fit
-        # ):
-        #     """Compare chi-squared values of different profile fits
-        #     popt_deV : array
-        #         Best-fit parameters from de Vaucouleurs fit
-        #     popt_exp : array
-        #         Best-fit parameters from exponential fit
-        #     r_fit : array
-        #         Radii for fitting
-        #     surface_brightness : array
-        #         Surface brightness data
-        #     valid_fit : array
-        #         Boolean array indicating valid fit points
-        #     Returns: bool
-        #         True if de Vaucouleurs fit is better, False otherwise"""
-
-        #     elliptical_galaxy = False
-        #     y_fit_de_vaucouleurs = de_vaucouleurs_profile(r_fit[valid_fit], *popt_deV)
-        #     y_fit_exponential = exponential_profile(r_fit[valid_fit], *popt_exp)
-        #     chi_squared_de_vaucouleurs = np.sum(
-        #         (surface_brightness[valid_fit] - y_fit_de_vaucouleurs) ** 2
-        #     )
-        #     chi_squared_exponential = np.sum(
-        #         (surface_brightness[valid_fit] - y_fit_exponential) ** 2
-        #     )
-
-        #     if chi_squared_de_vaucouleurs < chi_squared_exponential:
-        #         elliptical_galaxy = True
-        #     return elliptical_galaxy
 
         # Prepare data for fitting
         r_fit = 0.5 * (r_bins[:-1] + r_bins[1:])  # bin centers
 
-        # Follow Xu+2017 and fit only the binned radial profile between 0.05*R_e and 3.0*R_e
-        fit_min = 0.05 * R_e
-        fit_max = 3.0 * R_e
         valid_fit = (r_fit >= fit_min) & (r_fit <= fit_max) & (surface_brightness > 0)
 
         print(
@@ -3903,100 +4293,79 @@ class TNG50TullyFisherGenerator:
         # Find the sersic index n, effective radius R_e, and surface brightness I_e by fitting the Sersic profile
 
         # Use the median surface brightness as the scaling factor to improve numerical stability
-        y_scale = np.median(surface_brightness[valid_fit])
+        # y_scale = np.median(surface_brightness[valid_fit])
+        y_scale = np.max(surface_brightness[valid_fit])
 
-        sersic_profile_partial = partial(sersic_profile, y_scale=y_scale)
+        sersic_profile_partial = partial(self.sersic_profile, y_scale=y_scale)
         bestfit, cov = curve_fit(
             sersic_profile_partial,
             r_fit[valid_fit],
-            surface_brightness[valid_fit] / y_scale,
+            # surface_brightness[valid_fit] / y_scale,
+            np.log10(surface_brightness[valid_fit] / y_scale),
             p0=[np.log10(np.max(surface_brightness) * 0.5), R_e, 2.0],
             bounds=(
-                [0, 0, 0.1],
+                [0, fit_min, 0.1],
                 [
                     np.log10(np.max(surface_brightness)),
-                    float(self.pardict["r_lim"]),
+                    fit_max,
                     10.0,
                 ],
                 # [np.inf, np.inf, np.inf],
             ),  # Setting the bounds for Sersic index between 0.1 and 10, effective radius between 0 and r_lim, surface brightness positive
         )
 
-        sersic_residuals = (
-            surface_brightness[valid_fit]
-            - sersic_profile_partial(r_fit[valid_fit], *bestfit) * y_scale
-        )
+        sersic_residuals = np.log10(
+            surface_brightness[valid_fit] / y_scale
+        ) - sersic_profile_partial(r_fit[valid_fit], *bestfit)
         ssr_sersic = np.sum(sersic_residuals**2)
+        chi2_red = ssr_sersic / (len(r_fit[valid_fit]) - len(bestfit))
+        cov = cov * chi2_red  # Scale covariance matrix by reduced chi-squared
 
         # Find the best-fit parameters for de Vaucouleurs (n=4) and exponential (n=1) profiles
         de_vaucouleurs_profile_partial = partial(
-            de_vaucouleurs_profile, y_scale=y_scale
+            self.de_vaucouleurs_profile, y_scale=y_scale
         )
         bestfit_deV, _ = curve_fit(
             de_vaucouleurs_profile_partial,
             r_fit[valid_fit],
-            surface_brightness[valid_fit] / y_scale,
+            # surface_brightness[valid_fit] / y_scale,
+            np.log10(surface_brightness[valid_fit] / y_scale),
             p0=[np.log10(np.max(surface_brightness) * 0.5), R_e],
             bounds=(
-                [0, 0],
-                [np.log10(np.max(surface_brightness)), float(self.pardict["r_lim"])],
+                [0, fit_min],
+                [np.log10(np.max(surface_brightness)), fit_max],
             ),
         )
 
-        de_vaucouleurs_residuals = (
-            surface_brightness[valid_fit]
-            - de_vaucouleurs_profile_partial(r_fit[valid_fit], *bestfit_deV) * y_scale
-        )
+        de_vaucouleurs_residuals = np.log10(
+            surface_brightness[valid_fit] / y_scale
+        ) - de_vaucouleurs_profile_partial(r_fit[valid_fit], *bestfit_deV)
         ssr_deV = np.sum(de_vaucouleurs_residuals**2)
 
-        exponential_profile_partial = partial(exponential_profile, y_scale=y_scale)
+        exponential_profile_partial = partial(self.exponential_profile, y_scale=y_scale)
         bestfit_exp, _ = curve_fit(
             exponential_profile_partial,
             r_fit[valid_fit],
-            surface_brightness[valid_fit] / y_scale,
+            # surface_brightness[valid_fit] / y_scale,
+            np.log10(surface_brightness[valid_fit] / y_scale),
             p0=[np.log10(np.max(surface_brightness) * 0.5), R_e],
             bounds=(
-                [0, 0],
-                [np.log10(np.max(surface_brightness)), float(self.pardict["r_lim"])],
+                [0, fit_min],
+                [np.log10(np.max(surface_brightness)), fit_max],
             ),
         )
 
-        exponential_residuals = (
-            surface_brightness[valid_fit]
-            - exponential_profile_partial(r_fit[valid_fit], *bestfit_exp) * y_scale
-        )
+        exponential_residuals = np.log10(
+            surface_brightness[valid_fit] / y_scale
+        ) - exponential_profile_partial(r_fit[valid_fit], *bestfit_exp)
         ssr_exp = np.sum(exponential_residuals**2)
-
-        # # Determine if the galaxy is elliptical based on chi-squared comparison
-        # is_elliptical = compare_chi_squared(
-        #     bestfit_deV, bestfit_exp, r_fit, surface_brightness, valid_fit
-        # )
 
         # The best-fit parameters of surface brightness at the effective radius, effective radius, and Sersic index
         I_e_log_fit, R_e_fit, n_fit = bestfit
         I_e_fit = 10**I_e_log_fit  # Convert log10(I_e) back to I_e
 
-        # Plot the surface brightness profile and the Sersic fit for visual inspection
-        # plt.figure()
-        # plt.scatter(r_fit, surface_brightness, label="Data", color="blue")
-        # r_plot = np.linspace(0, float(self.pardict["r_lim"]), 100)
-        # plt.plot(
-        #     r_plot,
-        #     sersic_profile(r_plot, *bestfit),
-        #     label=f"Sersic Fit (n={n_fit:.2f})",
-        #     color="red",
-        # )
-        # plt.xscale("log")
-        # plt.yscale("log")
-        # plt.xlabel("Radius")
-        # plt.ylabel("Surface Brightness")
-        # plt.title(f"Galaxy {galaxy_id} Surface Brightness Profile in {band} band")
-        # plt.legend()
-        # plt.savefig(f"galaxy_{galaxy_id}_surface_brightness_{band}.png")
-        # plt.close()
-
         surface_brightness_mean = np.sum(L_sorted[np.where(r_sorted < R_e_fit)[0]]) / (
-            np.pi * q * R_e_fit**2
+            np.pi * R_e_fit**2
         )
 
         # Calculate the "model" luminosity with the analytical formula in Xu+2017. The model is calculated within 7 times the effective radius.
@@ -4015,6 +4384,7 @@ class TNG50TullyFisherGenerator:
 
         # Find index of stellar particles within 0.5 R_e_fit
         indices_within_half_Re = np.where(r_geo <= 0.5 * R_e_fit)[0]
+        # indices_within_half_Re = np.where(r_ell <= 0.5 * R_e_fit)[0]
         velocities_within_half_Re = (
             particles["Velocities"][indices_within_half_Re]
             - self.galaxy_data[galaxy_id]["SubhaloVel"]
@@ -4031,7 +4401,7 @@ class TNG50TullyFisherGenerator:
         sigma_los = np.std(los_velocities)
 
         print(
-            f"Galaxy {self.galaxy_data[galaxy_id]['SubhaloID']}, Band {band}: Fitted Sersic index n = {n_fit:.2f} with uncertainty {cov[2, 2] ** 0.5 if cov is not None else 'N/A'}, Effective radius R_e = {R_e_fit:.2f} kpc, Surface brightness I_e = {I_e_fit:.2e} erg/s/kpc^2, velocity dispersion σ_los = {sigma_los:.2f} km/s. The ssr for the de Vaucouleurs fit is {ssr_deV:.2e}, for the exponential fit is {ssr_exp:.2e}, and for the Sersic fit is {ssr_sersic:.2e}."
+            f"Galaxy {self.galaxy_data[galaxy_id]['SubhaloID']}, Band {band}: Fitted Sersic index n = {n_fit:.2f} with uncertainty {cov[2, 2] ** 0.5 if cov is not None else 'N/A'}, Effective radius R_e = {R_e_fit:.2f} kpc with uncertainty {cov[1, 1] ** 0.5 if cov is not None else 'N/A'}, Surface brightness I_e = {I_e_fit:.2e} erg/s/kpc^2, velocity dispersion σ_los = {sigma_los:.2f} km/s. The ssr for the de Vaucouleurs fit is {ssr_deV:.2e}, for the exponential fit is {ssr_exp:.2e}, and for the Sersic fit is {ssr_sersic:.2e}."
         )
 
         # plot_surface_brightness_profile(
@@ -4064,22 +4434,7 @@ class TNG50TullyFisherGenerator:
             surface_brightness[valid_fit]
         )  # surface brightness data used for fitting
 
-        pass_cutout_selection, message = self.cutout_selection(
-            data_subhalo=self.galaxy_data[galaxy_id],
-            stage=2,
-            band=band,
-            ssr_deV=ssr_deV,
-            ssr_exp=ssr_exp,
-            sersic_unc=cov[2, 2] ** 0.5 if cov is not None else np.inf,
-        )
-
-        if pass_cutout_selection is False:
-            print(
-                f"Skipping galaxy index {galaxy_id} due to cutout selection criteria: {message}"
-            )
-            return galaxy_id
-        else:
-            return None
+        return None
 
     # Calculate the luminosity and surface brightness profile for all galaxies in bands
     def calculate_luminosities_and_surface_brightness_profiles(
@@ -4095,12 +4450,28 @@ class TNG50TullyFisherGenerator:
             )
             # start = time.time()
             self._estimate_magnitude_luminosity(i)
+            run_cutout_selection = True
             for band in self.pardict["bands"]:
                 index = self.direct_effective_radius_surface_brightness_sersic_index(
                     i, band, method="stars"
                 )
                 if index is not None:
                     del_index.append(index)
+                    run_cutout_selection = False
+                    message = "No galaxy within the radial limit for sersic fit."
+                    break  # No need to process other bands if this galaxy is to be deleted
+
+            if run_cutout_selection is True:
+                pass_cutout_selection, message = self.cutout_selection(
+                    data_subhalo=self.galaxy_data[i],
+                    stage=2,
+                )
+
+            if pass_cutout_selection is False:
+                print(
+                    f"Skipping galaxy index {i} due to cutout selection criteria: {message}"
+                )
+                del_index.append(i)
 
             # end = time.time()
             # print(f"Time taken for galaxy {i}: {end - start:.2f} seconds")
@@ -4108,20 +4479,18 @@ class TNG50TullyFisherGenerator:
 
         # Remove galaxies that did not pass the selection
 
-        del_index_unique = np.unique(np.array(del_index))
-
-        if len(del_index_unique) > 0:
+        if len(del_index) > 0:
             print(
-                f"Removing {len(del_index_unique)} galaxies that did not pass the selection criteria."
+                f"Removing {len(del_index)} galaxies that did not pass the selection criteria."
             )
             self.galaxy_data = [
-                g for j, g in enumerate(self.galaxy_data) if j not in del_index_unique
+                g for j, g in enumerate(self.galaxy_data) if j not in del_index
             ]
             self.stellar_data = [
-                s for j, s in enumerate(self.stellar_data) if j not in del_index_unique
+                s for j, s in enumerate(self.stellar_data) if j not in del_index
             ]
             self.gas_data = [
-                g for j, g in enumerate(self.gas_data) if j not in del_index_unique
+                g for j, g in enumerate(self.gas_data) if j not in del_index
             ]
 
         np.savez(
@@ -4235,6 +4604,105 @@ def main():
             job_num += 1
         print(f"Combining data from {job_num} jobs...")
 
+        description_fields_subhalo = {
+            "Description": "Field descriptions for subhalo properties",
+            "SubhaloID": "Unique identifier for the subhalo",
+            "SnapNum": "Snapshot number. Between 0 and 99 for TNG simulations",
+            "SubhaloLen": "Total number of particles of all types in the subhalo",
+            "SubhaloLenStars": "Number of star particles in the subhalo",
+            "SubhaloLenGas": "Number of gas particles in the subhalo",
+            "SubhaloMass": "Total mass of the subhalo in units of solar masses. Total mass of all member particle/cells which are bound to this Subhalo, of all types. Particle/cells bound to subhaloes of this Subhalo are NOT accounted for.",
+            "SubhaloStellarMass": "Total stellar mass of the subhalo in units of solar masses. Particle/cells bound to subhaloes of this Subhalo are NOT accounted for. Note: Wind phase cells are counted as gas (type 0) for SubhaloMassType.",
+            "SubhaloGasMass": "Total gas mass of the subhalo in units of solar masses. Particle/cells bound to subhaloes of this Subhalo are NOT accounted for. Note: Wind phase cells are counted as gas (type 0) for SubhaloMassType.",
+            "SubhaloDMMass": "Total dark matter mass of the subhalo in units of solar masses. Particle/cells bound to subhaloes of this Subhalo are NOT accounted for. Note: Wind phase cells are counted as gas (type 0) for SubhaloMassType.",
+            "SubhaloBaryonicMass": "Total baryonic mass (stars + gas) of the subhalo in units of solar masses. Particle/cells bound to subhaloes of this Subhalo are NOT accounted for. Note: Wind phase cells are counted as gas (type 0) for SubhaloMassType.",
+            "GasToStellarMassRatio": "Ratio of gas mass to stellar mass",
+            "SubhaloPos": "3D position vector (proper distance) of the subhalo in kpc relative to the particle with the minimum gravitational potential energy",
+            "SubhaloPosX": "X-coordinate (proper distance) of the subhalo position in kpc, relative to the particle with the minimum gravitational potential energy",
+            "SubhaloPosY": "Y-coordinate (proper distance) of the subhalo position in kpc, relative to the particle with the minimum gravitational potential energy",
+            "SubhaloPosZ": "Z-coordinate (proper distance) of the subhalo position in kpc, relative to the particle with the minimum gravitational potential energy",
+            "DistanceMpc": "Distance from the observer (relative to the particle with the minimum gravitational potential energy) to the subhalo in Mpc",
+            "DistanceModulus": "Distance modulus calculated from the distance in Mpc",
+            "SubhaloVel": "Peculiar velocity of the group, computed as the sum of the mass weighted velocities of all particles/cells in this group, of all types, in km/s",
+            "SubhaloVelX": "X-component of the subhalo peculiar velocity in km/s",
+            "SubhaloVelY": "Y-component of the subhalo peculiar velocity in km/s",
+            "SubhaloVelZ": "Z-component of the subhalo peculiar velocity in km/s",
+            "VelocityMagnitude": "Magnitude of the subhalo peculiar velocity in km/s",
+            "SubhaloSFR": "Sum of the individual star formation rates of all gas cells in this subhalo, in solar masses per year",
+            "SubhaloGasMetallicity": "Mass-weighted average metallicity (Mz/Mtot, where Z = any element above He) of the gas cells bound to this Subhalo, but restricted to cells within twice the stellar half mass radius.",
+            "SubhaloStellarMetallicity": "Mass-weighted average metallicity (Mz/Mtot, where Z = any element above He) of the star particles bound to this Subhalo, but restricted to stars within twice the stellar half mass radius.",
+            "SubhaloHalfmassRad": "Radius (in proper distance) containing half of the total mass (SubhaloMass) of this Subhalo in kpc",
+            "SubhaloHalfmassRadStars": "Radius (in proper distance) containing half of the total stellar mass (SubhaloStellarMass) of this Subhalo in kpc",
+            "SubhaloHalfmassRadGas": "Radius (in proper distance) containing half of the total gas mass (SubhaloGasMass) of this Subhalo in kpc",
+            "SubhaloHalfmassRadDM": "Radius (in proper distance) containing half of the total dark matter mass (SubhaloDMMass) of this Subhalo in kpc",
+            "SubhaloMaxCircVel": "Maximum value of the spherically-averaged rotation curve. All available particle types (e.g. gas, stars, DM, and SMBHs) are included in this calculation.",
+            "SubhaloVelDisp": "One-dimensional velocity dispersion of all the member particles/cells (the 3D dispersion divided by square root of 3), in km/s",
+            "SpecificSFR": "Specific star formation rate, defined as SubhaloSFR divided by SubhaloStellarMass, in Gyr^-1",
+            "SurfaceDensity": "Stellar surface density, defined as SubhaloStellarMass divided by (pi * SubhaloHalfmassRad^2), in solar masses per kpc^2",
+            "SubhaloMassType": "Masses of different particle types in the subhalo in solar mass. Order: [gas, dark matter, unused, unused, stars, black holes], in solar masses. Particle/cells bound to subhaloes of this Subhalo are NOT accounted for.",
+            "SubhaloSpin": "Spin vector of the subhalo, computed as the sum of the mass weighted angular momenta of all particles/cells in this group, of all types, in km/s kpc",
+            "SubhaloFlag": "Flag indicating whether the subhalo is astrophysical (1) or not (0)",
+            "Redshift": "Redshift of the subhalo based on its comoving distance relative to the particle with the minimum gravitational potential energy",
+            "LookbackTime": "Lookback time corresponding to the redshift of the subhalo in Gyr",
+            "CosmicTime": "Cosmic time at the snapshot in Gyr",
+            "Inclination_star": "Inclination angle of the stellar component in degrees (mass weighted)",
+            "Position_Angle_star": "Position angle of the stellar component in degrees (mass weighted)",
+            "Mass_Axial_Ratio_star": "Mass weighted axial ratio of the stellar component",
+            "Mass_Ellipticity_star": "Mass weighted ellipticity of the stellar component",
+            "Mass_Orientation_Angle_star": "Mass weighted orientation angle of the stellar component in degrees",
+            "Inclination_gas": "Inclination angle of the gas component in degrees (mass weighted)",
+            "Position_Angle_gas": "Position angle of the gas component in degrees (mass weighted)",
+            "Mass_Axial_Ratio_gas": "Mass weighted axial ratio of the gas component",
+            "Mass_Ellipticity_gas": "Mass weighted ellipticity of the gas component",
+            "Mass_Orientation_Angle_gas": "Mass weighted orientation angle of the gas component in degrees",
+            "min_stellar_age": "Minimum stellar age of star (Youngest stars) particles in the subhalo in Gyr",
+            "max_stellar_age": "Maximum stellar age of star (Oldest stars) particles in the subhalo in Gyr",
+            "Raw_Luminosity_+band": "Total raw luminosity of the subhalo in the specified band in erg/s",
+            "Duested_Luminosity_+band": "Total dust-extincted luminosity of the subhalo in the specified band in erg/s",
+            "R_e_fit_+band": "Fitted effective radius from Sersic profile in kpc in the specified band",
+            "I_e_fit_+band": "Fitted surface brightness at the effective radius from Sersic profile in erg/s/kpc^2 in the specified band",
+            "n_fit_+band": "Fitted Sersic index from Sersic profile in the specified band",
+            "R_e_direct_+band": "Directly calculated half-light radius in kpc in the specified band",
+            "MSB_+band": "Mean surface brightness within the effective radius in erg/s/kpc^2 in the specified band",
+            "sigma_los_+band": "Line-of-sight velocity dispersion within 0.5 R_e_fit in km/s in the specified band",
+            "fit_cov_matrix_+band": "Covariance matrix of the Sersic profile fit parameters in the specified band",
+            "r_fit_profile_+band": "Radii used for fitting the Sersic profile in kpc in the specified band",
+            "surface_brightness_profile_+band": "Surface brightness data used for fitting the Sersic profile in erg/s/kpc^2 in the specified band",
+            "sersic_n": "Sersic index from simultaneous fit to SDSS r, g, and i bands",
+            "sersic_n_unc": "Uncertainty in Sersic index from simultaneous fit to SDSS r, g, and i bands",
+            "R_eff_sersic": "Effective radius from simultaneous fit to SDSS r, g, and i bands in kpc",
+            "R_eff_sersic_unc": "Uncertainty in effective radius from simultaneous fit to SDSS r, g, and i bands in kpc",
+            "Other parameters": "For TNG50-1 spiral galaxy catalogues. Additional parameters are read in through the supplementary data files. See https://www.tng-project.org/data/docs/specifications/#sec5t for definitions. ",
+        }
+
+        description_fields_gas = {
+            "Description": "Gas particle data fields descriptions",
+            "Coordinates": "3D position vector of gas particles in kpc. Spatial position within the periodic simulation domain of BoxSize. Proper coordinate.",
+            "Masses": "Mass of gas particles in units of solar masses. Refinement/derefinement attempts to keep this value within a factor of two of the targetGasMass for every cell.",
+            "GFM_Metallicity": "The ratio MZ/Mtotal where MZ is the total mass all metal elements (above He). Is NOT in solar units. To convert to solar metallicity, divide by 0.0127 (the primordial solar metallicity).",
+            "Velocities": "3D peculiar velocity vector of gas particles in km/s. Velocity with respect to the simulation box.",
+            "GFM_Metals": "Individual abundances of nine species: H, He, C, N, O, Ne, Mg, Si, Fe (in this order). Each is the dimensionless ratio of mass in that species to the total gas cell mass. The tenth entry contains the 'total' of all other (i.e. untracked) metals.",
+            "NeutralHydrogenAbundance": "Fraction of the hydrogen cell mass (or density) in neutral hydrogen, so nH0=NeutralHydrogenAbundance∗nH. (So note that nH+=nH−nH0) Use with caution for star-forming gas, as the calculation is based on the 'effective' temperature of the equation of state, which is not a physical temperature.",
+            "Density": "Mass density of cell (calculated as mass/volume). in units of solar masses per kpc^3.",
+            "StarFormationRate": "Instantaneous star formation rate of this gas cell in units of solar masses per year. Non-star-forming gas cells have SFR=0.",
+            "InternalEnergy (Currently not included in the output, but is used to calculate the temperature)": "Internal (thermal) energy per unit mass for this gas cell. See https://www.tng-project.org/data/docs/faq/ for conversion to gas temperature. Use with caution for star-forming gas, as this corresponds to the 'effective' temperature of the equation of state, which is not a physical temperature. Note: this field has \"corrected\" values, and is generally recommended for all uses, see https://www.tng-project.org/data/docs/background/#internalenergy for details.",
+            "ElectronAbundance": "Fractional electron number density with respect to the total hydrogen number density, so ne=ElectronAbundance∗nH where nH=XH∗ρ/mp. Use with caution for star-forming gas (see comment for NeutralHydrogenAbundance).",
+            "Temperature": "Temperature of the gas cell in Kelvin. This is calculated with the InternalEnergy and ElectronAbundance fields following https://www.tng-project.org/data/docs/faq/",
+        }
+
+        description_fields_star = {
+            "Description": "Star particle data fields descriptions",
+            "Coordinates": "3D position vector of star particles in kpc. Spatial position within the periodic simulation domain of BoxSize. Proper coordinate.",
+            "Masses": "Mass of this star or wind phase cell.",
+            "GFM_Metallicity": "The ratio MZ/Mtotal where MZ is the total mass all metal elements (above He). Is NOT in solar units. To convert to solar metallicity, divide by 0.0127 (the primordial solar metallicity). Inherited from the gas cell spawning/converted into this star, at the time of birth.",
+            "GFM_StellarFormationTime": "The exact time (given as the scalefactor) when this star was formed. Note: The only differentiation between a real star (>0) and a wind phase gas cell (<=0) is the sign of this quantity.",
+            "Velocities": "3D peculiar velocity vector of star particles in km/s. Velocity with respect to the simulation box.",
+            "Stellar_age": "Age of the star particle in Gyr, calculated as the difference between the cosmic time at the snapshot and the formation time of the star particle.",
+            "AB_apparent_magnitudes_+band": "Apparent magnitude of the star particle in the specified band.",
+            "Raw_Luminosity_+band": "Intrinsic luminosity of the star particle in the specified band in erg/s.",
+            "Duested_Luminosity_+band": "Dust-extincted luminosity of the star particle in the specified band in erg/s.",
+        }
+
         galaxy_data_all = []
         for i in range(job_num):
             out_dir = pardict["out_dir"] + f"/job_id_{i}_{pardict['galaxy_type']}/"
@@ -4258,6 +4726,12 @@ def main():
                 print(
                     f"No data found in {out_dir}, no galaxy satisfy the selection criteria."
                 )
+
+        # Append the description fields to the end of the list
+        # print(len(galaxy_data_all))
+        galaxy_data_all.append(description_fields_subhalo)
+        # print(len(galaxy_data_all))
+        # print(galaxy_data_all[-1])
         np.savez(
             pardict["out_dir"] + "/subhalo_data_analysis.npz",
             np.array(galaxy_data_all, dtype=object),
@@ -4299,6 +4773,14 @@ def main():
                     print(
                         f"No data found in {out_dir}, no galaxy satisfy the selection criteria."
                     )
+
+            # Append the description fields to the end of the list
+            # print(len(stellar_data_all), len(gas_data_all))
+            stellar_data_all.append(description_fields_star)
+            gas_data_all.append(description_fields_gas)
+            # print(len(stellar_data_all), len(gas_data_all))
+            # print(stellar_data_all[-1])
+            # print(gas_data_all[-1])
 
             np.savez(
                 pardict["out_dir"] + "/stellar_data_analysis.npz",
