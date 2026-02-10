@@ -412,48 +412,6 @@ def rotation_curve_fit(rr, vv, vv_err, p0=[200.0, 5.0, 1.0]):
     return popt, pcov, model
 
 
-def make_synthetic_image(xyz, weight, box_size=50.0, npix=512, sigma=1.0):
-    """
-    Generate a 2D synthetic image from particle positions and luminosities.
-
-    Parameters
-    ----------
-    xyz : ndarray
-        Nx3 array of particle positions (e.g., in kpc)
-    weight : ndarray
-        Nx1 array of weights (e.g., dust-attenuated luminosities)
-    box_size : float
-        Size of the 2D projected box (kpc)
-    npix : int
-        Number of pixels along each axis
-    sigma : float
-        Gaussian smoothing (in pixels)
-
-    Returns
-    -------
-    img : 2D ndarray
-        Smoothed luminosity map
-    """
-    # project onto xy-plane
-    x, y = xyz[:, 0], xyz[:, 1]
-
-    # make 2D histogram weighted by luminosity
-    H, xedges, yedges = np.histogram2d(
-        x,
-        y,
-        bins=npix,
-        range=[[-box_size / 2, box_size / 2], [-box_size / 2, box_size / 2]],
-        weights=weight,
-    )
-
-    # # optional Gaussian smoothing
-    # img = gaussian_filter(H, sigma=sigma)
-
-    img = H
-
-    return img
-
-
 # data = np.load(
 #     "/home/ylai1998/KL_pipeline/kl_roman_pipe/data/tng50/subhalo_data_analysis.npz",
 #     allow_pickle=True,
