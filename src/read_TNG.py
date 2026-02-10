@@ -52,7 +52,7 @@ import kinematics
 from scipy.spatial.transform import Rotation
 from configobj import ConfigObj
 from scipy.interpolate import RegularGridInterpolator, interp1d, splrep, splev, splint
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, minimize
 from scipy.integrate import simpson
 from scipy.special import gamma, gammainc
 from functools import partial
@@ -955,6 +955,9 @@ class TNG50TullyFisherGenerator:
                 )
                 V_max = subhalo_detail.get("vmax", np.nan)
                 vel_disp = subhalo_detail.get("veldisp", np.nan)
+                V_max_rad = (
+                    subhalo_detail.get("vmaxrad", np.nan) * self.scale_factor / self.h
+                )
 
                 if bool(int(self.pardict["sel_cut"])):
                     if (
@@ -1721,6 +1724,7 @@ class TNG50TullyFisherGenerator:
                     axial_ratio_gas,
                     ellipticity_gas,
                     orientation_angle_gas,
+                    frac_in_disk_gas,
                 ) = self.find_inclination_ellipticity(
                     data_gas=gas_data_single,
                     data_subhalo=self.galaxy_data[index],
@@ -1738,6 +1742,7 @@ class TNG50TullyFisherGenerator:
                 axial_ratio_gas = None
                 ellipticity_gas = None
                 orientation_angle_gas = None
+                frac_in_disk_gas = None
 
             # gas_SF_index = np.where(gas_data_single["StarFormationRate"] > 0)[0]
             # gas_data_SF = {
@@ -1817,6 +1822,7 @@ class TNG50TullyFisherGenerator:
             self.galaxy_data[index]["Mass_Orientation_Angle_gas"] = (
                 orientation_angle_gas
             )
+            self.galaxy_data[index]["Fraction_in_Disk_gas"] = frac_in_disk_gas
 
             gas_data.append(gas_data_single)
 
@@ -1947,12 +1953,15 @@ class TNG50TullyFisherGenerator:
 
             r_fit = []
             SB_fit = []
+            SB_unc = []
             for band in self.pardict["sersic_bands"]:
                 SB_fit.append(data_subhalo["surface_brightness_profile_" + band])
                 r_fit.append(data_subhalo["r_fit_profile_" + band])
+                SB_unc.append(data_subhalo["surface_brightness_uncertainty_" + band])
 
             r_fit_all = np.concatenate(r_fit)
             SB_fit_all = np.concatenate(SB_fit)
+            SB_unc_all = np.concatenate(SB_unc)
             y_scale_r = np.max(SB_fit[0])
             y_scale_g = np.max(SB_fit[1])
             y_scale_i = np.max(SB_fit[2])
@@ -2141,6 +2150,8 @@ class TNG50TullyFisherGenerator:
                     ],
                     # [np.inf, np.inf, np.inf],
                 ),  # Setting the bounds for Sersic index between 0.1 and 10, effective radius between 0 and r_lim, surface brightness positive
+                sigma=SB_unc_all,
+                absolute_sigma=True,
             )
 
             # sersic_residuals = (
@@ -2150,9 +2161,11 @@ class TNG50TullyFisherGenerator:
             sersic_residuals = np.log10(SB_fit_all_scale) - sersic_multiband_partial(
                 r_fit_all, *bestfit
             )
-            ssr_sersic = np.sum(sersic_residuals**2)
-            chi2_red = ssr_sersic / (len(r_fit_all) - len(bestfit))
-            cov = cov * chi2_red  # Scale covariance matrix by reduced chi-squared
+            # ssr_sersic = np.sum(sersic_residuals**2)
+            # chi2_red = ssr_sersic / (len(r_fit_all) - len(bestfit))
+            # cov = cov * chi2_red  # Scale covariance matrix by reduced chi-squared
+            chi2 = np.sum((sersic_residuals / SB_unc_all) ** 2)
+            chi2_red = chi2 / (len(r_fit_all) - len(bestfit))
 
             Ie_r, Ie_g, Ie_i, R_eff, n_sersic = bestfit
             Ie_r_unc, Ie_g_unc, Ie_i_unc, R_eff_unc, n_sersic_unc = np.sqrt(
@@ -2185,6 +2198,8 @@ class TNG50TullyFisherGenerator:
                         np.max([np.max(r_fit[0]), np.max(r_fit[1]), np.max(r_fit[2])]),
                     ],
                 ),
+                sigma=SB_unc_all,
+                absolute_sigma=True,
             )
 
             # de_vaucouleurs_residuals = (
@@ -2194,7 +2209,8 @@ class TNG50TullyFisherGenerator:
             de_vaucouleurs_residuals = np.log10(
                 SB_fit_all_scale
             ) - de_vaucouleurs_multiband_partial(r_fit_all, *bestfit_deV)
-            ssr_deV = np.sum(de_vaucouleurs_residuals**2)
+            # ssr_deV = np.sum(de_vaucouleurs_residuals**2)
+            chi2_de_vaucouleurs = np.sum((de_vaucouleurs_residuals / SB_unc_all) ** 2)
 
             bestfit_exp, _ = curve_fit(
                 exponential_multiband_partial,
@@ -2221,6 +2237,8 @@ class TNG50TullyFisherGenerator:
                         np.max([np.max(r_fit[0]), np.max(r_fit[1]), np.max(r_fit[2])]),
                     ],
                 ),
+                sigma=SB_unc_all,
+                absolute_sigma=True,
             )
 
             # exponential_residuals = (
@@ -2230,39 +2248,58 @@ class TNG50TullyFisherGenerator:
             exponential_residuals = np.log10(
                 SB_fit_all_scale
             ) - exponential_multiband_partial(r_fit_all, *bestfit_exp)
-            ssr_exp = np.sum(exponential_residuals**2)
+            # ssr_exp = np.sum(exponential_residuals**2)
+            chi2_exponential = np.sum((exponential_residuals / SB_unc_all) ** 2)
 
             data_subhalo["sersic_n"] = n_sersic
             data_subhalo["sersic_n_unc"] = n_sersic_unc
             data_subhalo["R_eff_sersic"] = R_eff
             data_subhalo["R_eff_sersic_unc"] = R_eff_unc
+            data_subhalo["chi2_red_sersic"] = chi2_red
 
             print(
-                "The best-fit R_eff over r, g, i bands are {:.2f} +/- {:.2f} kpc".format(
-                    R_eff, R_eff_unc
+                "The best-fit R_eff over r, g, i bands are {:.2f} +/- {:.2f} kpc with reduced chi-squared {:.2f} with sersic fit".format(
+                    R_eff, R_eff_unc, chi2_red
                 )
             )
 
             if self.pardict["galaxy_type"] == "spiral":
-                if n_sersic + n_sersic_unc < float(self.pardict["sersic_lim"]):
+                # if n_sersic + n_sersic_unc < float(self.pardict["sersic_lim"]):
+                #     pass_cutout_selection = True
+                #     message = None
+                #     print(
+                #         "Passing cutout selection, n_sersic = {:.2f} +/- {:.2f}".format(
+                #             n_sersic, n_sersic_unc
+                #         )
+                #     )
+                # elif chi2_exponential < chi2_de_vaucouleurs:
+                #     pass_cutout_selection = True
+                #     message = None
+                #     print(
+                #         "Passing cutout selection, chi2_exponential = {:.2f} < chi2_de_vaucouleurs = {:.2f}".format(
+                #             chi2_exponential, chi2_de_vaucouleurs
+                #         )
+                #     )
+                # else:
+                #     message = "Did not pass selection cut based on galaxy type and selection parameters. chi2_exponential = {:.2f}, chi2_de_vaucouleurs = {:.2f}, sersic_n = {:.2f} +/- {:.2f}".format(
+                #         chi2_exponential, chi2_de_vaucouleurs, n_sersic, n_sersic_unc
+                #     )
+
+                # Spiral galaxies contain both gas and stars while the sersic index only fit for the surface brightness of stars. Using the thin disk mass cut in https://arxiv.org/abs/2503.00194 to apply the selection cut
+                if (
+                    not np.isnan(data_subhalo["ThinDisc"][0])
+                    and data_subhalo["ThinDisc"][0] > 0.5
+                ):
                     pass_cutout_selection = True
                     message = None
                     print(
-                        "Passing cutout selection, n_sersic = {:.2f} +/- {:.2f}".format(
-                            n_sersic, n_sersic_unc
-                        )
-                    )
-                elif ssr_exp < ssr_deV:
-                    pass_cutout_selection = True
-                    message = None
-                    print(
-                        "Passing cutout selection, ssr_exp = {:.2f} < ssr_deV = {:.2f}".format(
-                            ssr_exp, ssr_deV
+                        "Passing cutout selection based on thin disk mass fraction, M_thin/M_star = {:.2f}".format(
+                            data_subhalo["ThinDisc"][0]
                         )
                     )
                 else:
-                    message = "Did not pass selection cut based on galaxy type and selection parameters. ssr_exp = {:.2f}, ssr_deV = {:.2f}, sersic_n = {:.2f} +/- {:.2f}".format(
-                        ssr_exp, ssr_deV, n_sersic, n_sersic_unc
+                    message = "Did not pass selection cut based on thin disk mass fraction, M_thin/M_star = {:.2f}".format(
+                        data_subhalo["ThinDisc"][0]
                     )
 
             elif self.pardict["galaxy_type"] == "elliptical":
@@ -2274,17 +2311,17 @@ class TNG50TullyFisherGenerator:
                             n_sersic, n_sersic_unc
                         )
                     )
-                elif ssr_deV < ssr_exp:
+                elif chi2_de_vaucouleurs < chi2_exponential:
                     pass_cutout_selection = True
                     message = None
                     print(
-                        "Passing cutout selection, ssr_deV = {:.2f} < ssr_exp = {:.2f}".format(
-                            ssr_deV, ssr_exp
+                        "Passing cutout selection, chi2_de_vaucouleurs = {:.2f} < chi2_exponential = {:.2f}".format(
+                            chi2_de_vaucouleurs, chi2_exponential
                         )
                     )
                 else:
-                    message = "Did not pass selection cut based on galaxy type and selection parameters. ssr_deV = {:.2f}, ssr_exp = {:.2f}, sersic_n = {:.2f} +/- {:.2f}".format(
-                        ssr_deV, ssr_exp, n_sersic, n_sersic_unc
+                    message = "Did not pass selection cut based on galaxy type and selection parameters. chi2_de_vaucouleurs = {:.2f}, chi2_exponential = {:.2f}, sersic_n = {:.2f} +/- {:.2f}".format(
+                        chi2_de_vaucouleurs, chi2_exponential, n_sersic, n_sersic_unc
                     )
 
         else:
@@ -2524,6 +2561,14 @@ class TNG50TullyFisherGenerator:
             )
             pos_lim = float(self.pardict["pos_lim_gas"])
 
+            frac_in_disk = kinematics.fraction_in_disk(
+                mass_gas,
+                pos,
+                vel,
+                axis,
+                range=2.0 * data_subhalo["SubhaloHalfmassRadStars"],
+            )
+
         # Using the user defined line-of-sight (LOS) direction
         if self.los_axis == 2:
             los_vector = np.array([0, 0, 1])
@@ -2654,19 +2699,35 @@ class TNG50TullyFisherGenerator:
             1.0 + axial_ratio
         )  # Ellipticity definition
 
-        return (
-            pos_align,
-            vel_align,
-            vel_2D_align,
-            pos_incline,
-            vel_incline,
-            vel_2D_incline,
-            inclination,
-            position_angle,
-            axial_ratio,
-            ellipticity,
-            orientation_angle,
-        )
+        if method == "gas":
+            return (
+                pos_align,
+                vel_align,
+                vel_2D_align,
+                pos_incline,
+                vel_incline,
+                vel_2D_incline,
+                inclination,
+                position_angle,
+                axial_ratio,
+                ellipticity,
+                orientation_angle,
+                frac_in_disk,
+            )
+        else:
+            return (
+                pos_align,
+                vel_align,
+                vel_2D_align,
+                pos_incline,
+                vel_incline,
+                vel_2D_incline,
+                inclination,
+                position_angle,
+                axial_ratio,
+                ellipticity,
+                orientation_angle,
+            )
 
     def plot_vmap(self, subhalo_id, stat, xedges, yedges, method="star"):
         """Plot velocity map and save to file
@@ -3570,6 +3631,132 @@ class TNG50TullyFisherGenerator:
                     band,
                 )
 
+    # Triangular-Shaped Cloud (TSC) method for projecting particle properties onto a grid in 2D
+    def tsc_2d_vectorized_checked(self, x, y, weights, x_edges, y_edges, rtol=1e-3):
+        """
+        2D Triangular-Shaped Cloud (TSC) deposition, vectorized, weighted by user input,
+        with a sanity check that the sum of the grid equals the sum of input weights.
+
+        Parameters
+        ----------
+        x, y : array_like
+            Particle positions.
+        weights : array_like
+            Weight of each particle (same length as x and y).
+        x_edges, y_edges : array_like
+            Grid edges in x and y (1D arrays).
+        rtol : float
+            Relative tolerance for the sanity check.
+
+        Returns
+        -------
+        grid : 2D array
+            Grid of size (len(y_edges)-1, len(x_edges)-1) with TSC-weighted sums.
+        """
+        mask_inside = (
+            (x >= x_edges[0])
+            & (x < x_edges[-1])
+            & (y >= y_edges[0])
+            & (y < y_edges[-1])
+        )
+
+        x = x[mask_inside]
+        y = y[mask_inside]
+        weights = weights[mask_inside]
+
+        nx = len(x_edges) - 1
+        ny = len(y_edges) - 1
+        dx = np.diff(x_edges)[0]  # Bin width in x
+        dy = np.diff(y_edges)[0]  # Bin width in y
+
+        x_idx = (x - x_edges[0]) / dx
+        y_idx = (y - y_edges[0]) / dy
+
+        i_base = np.floor(x_idx).astype(int)  # The index of the central bin in x
+        j_base = np.floor(y_idx).astype(int)  # The index of the central bin in y
+
+        bin_center_x = (x_edges[:-1] + x_edges[1:]) / 2.0
+        bin_center_y = (y_edges[:-1] + y_edges[1:]) / 2.0
+
+        # dx_c = x_idx - i_base - 0.5
+        # dy_c = y_idx - j_base - 0.5
+
+        diff_x = x - bin_center_x[i_base]
+        diff_y = y - bin_center_y[j_base]
+
+        grid = np.zeros((nx, ny))
+
+        bin_index_x_left = i_base - 1
+        bin_index_x_center = i_base
+        bin_index_x_right = i_base + 1
+
+        bin_index_y_bottom = j_base - 1
+        bin_index_y_center = j_base
+        bin_index_y_top = j_base + 1
+
+        w_center_x = 0.75 - (diff_x / dx) ** 2
+        w_center_y = 0.75 - (diff_y / dy) ** 2
+        w_left_x = 0.5 * (0.5 - diff_x / dx) ** 2
+        w_right_x = 0.5 * (0.5 + diff_x / dx) ** 2
+        w_top_y = 0.5 * (0.5 + diff_y / dy) ** 2
+        w_down_y = 0.5 * (0.5 - diff_y / dy) ** 2
+
+        bin_index_x_left = np.clip(bin_index_x_left, 0, nx - 1)
+        bin_index_x_right = np.clip(bin_index_x_right, 0, nx - 1)
+        bin_index_y_bottom = np.clip(bin_index_y_bottom, 0, ny - 1)
+        bin_index_y_top = np.clip(bin_index_y_top, 0, ny - 1)
+
+        np.add.at(
+            grid,
+            (bin_index_x_center, bin_index_y_center),
+            weights * w_center_x * w_center_y,
+        )
+        np.add.at(
+            grid,
+            (bin_index_x_left, bin_index_y_center),
+            weights * w_left_x * w_center_y,
+        )
+        np.add.at(
+            grid,
+            (bin_index_x_right, bin_index_y_center),
+            weights * w_right_x * w_center_y,
+        )
+        np.add.at(
+            grid, (bin_index_x_center, bin_index_y_top), weights * w_center_x * w_top_y
+        )
+        np.add.at(
+            grid,
+            (bin_index_x_center, bin_index_y_bottom),
+            weights * w_center_x * w_down_y,
+        )
+        np.add.at(
+            grid, (bin_index_x_left, bin_index_y_top), weights * w_left_x * w_top_y
+        )
+        np.add.at(
+            grid, (bin_index_x_right, bin_index_y_top), weights * w_right_x * w_top_y
+        )
+        np.add.at(
+            grid, (bin_index_x_left, bin_index_y_bottom), weights * w_left_x * w_down_y
+        )
+        np.add.at(
+            grid,
+            (bin_index_x_right, bin_index_y_bottom),
+            weights * w_right_x * w_down_y,
+        )
+
+        # -------------------------
+        # Sanity check: sum of weights
+        # -------------------------
+        total_input = np.sum(weights)
+        total_grid = np.sum(grid)
+        if not np.isclose(total_input, total_grid, rtol=rtol):
+            raise ValueError(
+                f"Sanity check failed: total weight in grid ({total_grid}) "
+                f"does not match sum of input weights ({total_input})"
+            )
+
+        return grid
+
     def hydrogen_column_density(self, galaxy_id):
         """
         Calculate hydrogen column density N_H (cm⁻²) within a given number of grid cells that cover the galaxy.
@@ -3636,17 +3823,52 @@ class TNG50TullyFisherGenerator:
                 gas_coords = gas_coords[:, [0, 1]]
                 galaxy_pos = galaxy_pos[[0, 1]]
 
-            # --- project hydrogen mass onto the 2D grid ---
-            # weighted by neutral hydrogen fraction
-            gas_mass_hist, _, _ = np.histogram2d(
+            # # --- project hydrogen mass onto the 2D grid ---
+            # # weighted by neutral hydrogen fraction
+            # import time
+
+            # start_hist = time.time()
+            # gas_mass_hist, _, _ = np.histogram2d(
+            #     gas_coords[:, 0],
+            #     gas_coords[:, 1],
+            #     bins=[x_edges, y_edges],
+            #     weights=gas_masses * GFM_Metals * NeutroHydrogenAbundance,  # Msun
+            # )
+            # end_hist = time.time()
+
+            # start_TSC = time.time()
+            # Using TSC gridding to smooth the hydrogen mass distribution
+            gas_mass_TSC = self.tsc_2d_vectorized_checked(
                 gas_coords[:, 0],
                 gas_coords[:, 1],
-                bins=[x_edges, y_edges],
-                weights=gas_masses * GFM_Metals * NeutroHydrogenAbundance,  # Msun
+                gas_masses * GFM_Metals * NeutroHydrogenAbundance,
+                x_edges,
+                y_edges,
             )
+            # end_TSC = time.time()
+
+            # print(
+            #     np.shape(gas_mass_hist),
+            #     np.mean(gas_mass_hist),
+            #     np.std(gas_mass_hist),
+            #     np.min(gas_mass_hist),
+            #     np.max(gas_mass_hist),
+            #     end_hist - start_hist,
+            # )
+            # print(
+            #     np.shape(gas_mass_TSC),
+            #     np.mean(gas_mass_TSC),
+            #     np.std(gas_mass_TSC),
+            #     np.min(gas_mass_TSC),
+            #     np.max(gas_mass_TSC),
+            #     end_TSC - start_TSC,
+            # )
+
+            # raise ValueError("Debugging: stopping after printing gas mass statistics.")
 
             # --- compute per-pixel hydrogen mass in grams ---
-            hydrogen_mass_g = gas_mass_hist * self.Msun_to_g  # g per pixel
+            # hydrogen_mass_g = gas_mass_hist * self.Msun_to_g  # g per pixel
+            hydrogen_mass_g = gas_mass_TSC * self.Msun_to_g  # g per pixel
 
             # --- pixel area in cm² ---
             dx = (x_edges[-1] - x_edges[0]) / Ngrid  # kpc
@@ -4108,7 +4330,7 @@ class TNG50TullyFisherGenerator:
         # fit_min = 0.05 * R_e
         # fit_max = 3.0 * R_e
 
-        # Use Lu+2020 to fit between 0.05 R_hsm to 3.0 R_hsm
+        # # Use Lu+2020 to fit between 0.05 R_hsm to 3.0 R_hsm
         R_hsm = self.galaxy_data[galaxy_id]["SubhaloHalfmassRadStars"]
         fit_min = 0.05 * R_hsm
         fit_max = 3.0 * R_hsm
@@ -4138,94 +4360,192 @@ class TNG50TullyFisherGenerator:
             # 21,
         )
 
-        def tsc_1d(R, L, r_bins):
-            """
-            1D Triangular-Shaped-Cloud (TSC) surface brightness profile.
+        # def tsc_1d(R, L, r_bins):
+        #     """
+        #     1D Triangular-Shaped-Cloud (TSC) surface brightness profile.
 
-            Parameters
-            ----------
-            R : array_like
-                Circularized radii of particles (kpc or same units as r_bins)
-            L : array_like
-                Particle luminosities
-            r_bins : array_like
-                Bin edges (length n_bins + 1)
+        #     Parameters
+        #     ----------
+        #     R : array_like
+        #         Circularized radii of particles (kpc or same units as r_bins)
+        #     L : array_like
+        #         Particle luminosities
+        #     r_bins : array_like
+        #         Bin edges (length n_bins + 1)
 
-            Returns
-            -------
-            SB : ndarray
-                Surface brightness in each bin (length n_bins)
-            area : ndarray
-                Area of each radial annulus (length n_bins)
-            """
-            R = np.asarray(R)
-            L = np.asarray(L)
-            n_bins = len(r_bins) - 1
-            SB = np.zeros(n_bins)
+        #     Returns
+        #     -------
+        #     SB : ndarray
+        #         Surface brightness in each bin (length n_bins)
+        #     area : ndarray
+        #         Area of each radial annulus (length n_bins)
+        #     """
+        #     R = np.asarray(R)
+        #     L = np.asarray(L)
+        #     n_bins = len(r_bins) - 1
+        #     SB = np.zeros(n_bins)
 
-            # Compute bin width
-            dr = r_bins[1:] - r_bins[:-1]  # length n_bins
+        #     # Compute bin width
+        #     dr = r_bins[1:] - r_bins[:-1]  # length n_bins
 
-            # Compute bin centers
-            r_centers = 0.5 * (r_bins[:-1] + r_bins[1:])
+        #     # Compute bin centers
+        #     r_centers = 0.5 * (r_bins[:-1] + r_bins[1:])
 
-            # For each particle, find closest bin center
-            # Use searchsorted to find the bin to the right
-            bin_idx_right = np.searchsorted(r_centers, R)
-            # Clip to valid range
-            bin_idx_right = np.clip(bin_idx_right, 0, n_bins - 1)
-            # Left and right neighbor bins for TSC
-            bin_idx_left = np.clip(bin_idx_right - 1, 0, n_bins - 1)
-            bin_idx_center = bin_idx_right
+        #     # For each particle, find closest bin center
+        #     # Use searchsorted to find the bin to the right
+        #     bin_idx_right = np.searchsorted(r_centers, R)
+        #     # Clip to valid range
+        #     bin_idx_right = np.clip(bin_idx_right, 0, n_bins - 1)
+        #     # Left and right neighbor bins for TSC
+        #     bin_idx_left = np.clip(bin_idx_right - 1, 0, n_bins - 1)
+        #     bin_idx_center = bin_idx_right
 
-            # Compute normalized distance to center of central bin
-            dx = (R - r_centers[bin_idx_center]) / dr[bin_idx_center]
+        #     # Compute normalized distance to center of central bin
+        #     dx = (R - r_centers[bin_idx_center]) / dr[bin_idx_center]
 
-            # TSC weights (quadratic)
-            w_center = 0.75 - dx**2
-            w_left = 0.5 * (0.5 - dx) ** 2
-            w_right = 0.5 * (0.5 + dx) ** 2
+        #     # TSC weights (quadratic)
+        #     w_center = 0.75 - dx**2
+        #     w_left = 0.5 * (0.5 - dx) ** 2
+        #     w_right = 0.5 * (0.5 + dx) ** 2
 
-            # Accumulate luminosity to three bins
-            np.add.at(SB, bin_idx_center, L * w_center)
-            np.add.at(SB, bin_idx_left, L * w_left)
-            # Avoid double-counting if center == right edge
-            bin_idx_right_shifted = np.clip(bin_idx_center + 1, 0, n_bins - 1)
-            np.add.at(SB, bin_idx_right_shifted, L * w_right)
+        #     # Accumulate luminosity to three bins
+        #     np.add.at(SB, bin_idx_center, L * w_center)
+        #     np.add.at(SB, bin_idx_left, L * w_left)
+        #     # Avoid double-counting if center == right edge
+        #     bin_idx_right_shifted = np.clip(bin_idx_center + 1, 0, n_bins - 1)
+        #     np.add.at(SB, bin_idx_right_shifted, L * w_right)
 
-            # Compute area of each annulus
-            area = np.pi * (r_bins[1:] ** 2 - r_bins[:-1] ** 2)
+        #     # Compute area of each annulus
+        #     area = np.pi * (r_bins[1:] ** 2 - r_bins[:-1] ** 2)
 
-            if np.abs(np.sum(SB) - np.sum(L)) / np.sum(L) > 1e-3:
-                raise ValueError("TSC binning error: total luminosity mismatch.")
+        #     if np.abs(np.sum(SB) - np.sum(L)) / np.sum(L) > 1e-3:
+        #         raise ValueError("TSC binning error: total luminosity mismatch.")
 
-            # Surface brightness
-            SB /= area
+        #     # Surface brightness
+        #     SB /= area
 
-            return SB, area
+        #     return SB, area
 
-        surface_brightness, area = tsc_1d(R, L, r_bins)
+        # surface_brightness, area = tsc_1d(R, L, r_bins)
 
-        # surface_brightness = np.zeros(int(n_bins))
-        # # surface_brightness = np.zeros(20)
+        surface_brightness = np.zeros(int(n_bins))
+        # surface_brightness = np.zeros(20)
 
-        # # Digitize radii to get bin indices
-        # bin_indices = np.digitize(R, r_bins, right=True) - 1  # bins are 0-indexed
+        # Digitize radii to get bin indices
+        bin_indices = np.digitize(R, r_bins, right=True) - 1  # bins are 0-indexed
 
-        # # Total luminosity per bin (vectorized)
-        # Lsum_per_bin = np.bincount(bin_indices, weights=L, minlength=len(r_bins) - 1)
+        # Total luminosity per bin (vectorized)
+        Lsum_per_bin = np.bincount(bin_indices, weights=L, minlength=len(r_bins) - 1)
 
-        # # Area per bin (elliptical annulus)
-        # # area = np.pi * q * (r_bins[1:] ** 2 - r_bins[:-1] ** 2)
-        # area = np.pi * (r_bins[1:] ** 2 - r_bins[:-1] ** 2)
+        # Number of particles per bin
+        N_per_bin = np.bincount(bin_indices, minlength=len(r_bins) - 1)
 
-        # # Surface brightness (avoid division by zero)
-        # surface_brightness = np.zeros_like(area)
-        # valid = area > 0
+        # Area per bin (elliptical annulus)
+        # area = np.pi * q * (r_bins[1:] ** 2 - r_bins[:-1] ** 2)
+        area = np.pi * (r_bins[1:] ** 2 - r_bins[:-1] ** 2)
 
-        # surface_brightness[valid] = Lsum_per_bin[valid] / area[valid]
+        # Surface brightness (avoid division by zero)
+        surface_brightness = np.zeros_like(area)
+        valid = area > 0
+
+        surface_brightness[valid] = Lsum_per_bin[valid] / area[valid]
 
         print("Fitting Sersic profile to surface brightness data...")
+
+        # Prepare data for fitting
+        r_fit = 0.5 * (r_bins[:-1] + r_bins[1:])  # bin centers
+
+        valid_fit = (r_fit >= fit_min) & (r_fit <= fit_max) & (surface_brightness > 0)
+
+        print(
+            f"Fitting range: {fit_min:.3f} to {fit_max:.3f} kpc, with length {len(r_fit[valid_fit])} with orignal length {len(r_fit)}"
+        )
+
+        # Use the median surface brightness as the scaling factor to improve numerical stability
+        y_scale = np.max(surface_brightness[valid_fit])
+        # The systematic uncertainty from surface brightness observation
+        sigma_sys = float(
+            self.pardict["SB_sigma_sys"]
+        )  # The relative observational uncertainty in dex.
+        # The uncertainty from Poisson statistics
+        sigma_poisson = 1.0 / (np.sqrt(N_per_bin[valid_fit]) * np.log(10))
+        # Total uncertainty combining systematic and Poisson uncertainties
+        sigma_total = np.sqrt(sigma_sys**2 + sigma_poisson**2)
+
+        sersic_profile_partial = partial(self.sersic_profile, y_scale=y_scale)
+        bestfit, cov = curve_fit(
+            sersic_profile_partial,
+            r_fit[valid_fit],
+            # surface_brightness[valid_fit] / y_scale,
+            np.log10(surface_brightness[valid_fit] / y_scale),
+            p0=[np.log10(np.max(surface_brightness) * 0.5), R_e, 2.0],
+            bounds=(
+                [0, fit_min, 0.1],
+                [
+                    np.log10(np.max(surface_brightness)),
+                    fit_max,
+                    10.0,
+                ],
+                # [np.inf, np.inf, np.inf],
+            ),  # Setting the bounds for Sersic index between 0.1 and 10, effective radius between 0 and r_lim, surface brightness positive
+            sigma=sigma_total,
+            absolute_sigma=True,
+        )
+
+        sersic_residuals = np.log10(
+            surface_brightness[valid_fit] / y_scale
+        ) - sersic_profile_partial(r_fit[valid_fit], *bestfit)
+        # ssr_sersic = np.sum(sersic_residuals**2)
+        # chi2_red = ssr_sersic / (len(r_fit[valid_fit]) - len(bestfit))
+        # cov = cov * chi2_red  # Scale covariance matrix by reduced chi-squared
+        chi2 = np.sum((sersic_residuals / sigma_total) ** 2)
+        chi2_red = chi2 / (len(r_fit[valid_fit]) - len(bestfit))
+        print("The reduced chi-squared for the Sersic fit is:", chi2_red)
+
+        # Find the best-fit parameters for de Vaucouleurs (n=4) and exponential (n=1) profiles
+        de_vaucouleurs_profile_partial = partial(
+            self.de_vaucouleurs_profile, y_scale=y_scale
+        )
+        bestfit_deV, _ = curve_fit(
+            de_vaucouleurs_profile_partial,
+            r_fit[valid_fit],
+            # surface_brightness[valid_fit] / y_scale,
+            np.log10(surface_brightness[valid_fit] / y_scale),
+            p0=[np.log10(np.max(surface_brightness) * 0.5), R_e],
+            bounds=(
+                [0, fit_min],
+                [np.log10(np.max(surface_brightness)), fit_max],
+            ),
+            sigma=sigma_total,
+            absolute_sigma=True,
+        )
+
+        de_vaucouleurs_residuals = np.log10(
+            surface_brightness[valid_fit] / y_scale
+        ) - de_vaucouleurs_profile_partial(r_fit[valid_fit], *bestfit_deV)
+        # ssr_deV = np.sum(de_vaucouleurs_residuals**2)
+        chi2_de_vaucouleurs = np.sum((de_vaucouleurs_residuals / sigma_total) ** 2)
+
+        exponential_profile_partial = partial(self.exponential_profile, y_scale=y_scale)
+        bestfit_exp, _ = curve_fit(
+            exponential_profile_partial,
+            r_fit[valid_fit],
+            # surface_brightness[valid_fit] / y_scale,
+            np.log10(surface_brightness[valid_fit] / y_scale),
+            p0=[np.log10(np.max(surface_brightness) * 0.5), R_e],
+            bounds=(
+                [0, fit_min],
+                [np.log10(np.max(surface_brightness)), fit_max],
+            ),
+            sigma=sigma_total,
+            absolute_sigma=True,
+        )
+
+        exponential_residuals = np.log10(
+            surface_brightness[valid_fit] / y_scale
+        ) - exponential_profile_partial(r_fit[valid_fit], *bestfit_exp)
+        # ssr_exp = np.sum(exponential_residuals**2)
+        chi2_exponential = np.sum((exponential_residuals / sigma_total) ** 2)
 
         def plot_surface_brightness_profile(
             r_fit,
@@ -4281,91 +4601,16 @@ class TNG50TullyFisherGenerator:
             )
             plt.close()
 
-        # Prepare data for fitting
-        r_fit = 0.5 * (r_bins[:-1] + r_bins[1:])  # bin centers
-
-        valid_fit = (r_fit >= fit_min) & (r_fit <= fit_max) & (surface_brightness > 0)
-
-        print(
-            f"Fitting range: {fit_min:.3f} to {fit_max:.3f} kpc, with length {len(r_fit[valid_fit])} with orignal length {len(r_fit)}"
-        )
-
-        # Find the sersic index n, effective radius R_e, and surface brightness I_e by fitting the Sersic profile
-
-        # Use the median surface brightness as the scaling factor to improve numerical stability
-        # y_scale = np.median(surface_brightness[valid_fit])
-        y_scale = np.max(surface_brightness[valid_fit])
-
-        sersic_profile_partial = partial(self.sersic_profile, y_scale=y_scale)
-        bestfit, cov = curve_fit(
-            sersic_profile_partial,
-            r_fit[valid_fit],
-            # surface_brightness[valid_fit] / y_scale,
-            np.log10(surface_brightness[valid_fit] / y_scale),
-            p0=[np.log10(np.max(surface_brightness) * 0.5), R_e, 2.0],
-            bounds=(
-                [0, fit_min, 0.1],
-                [
-                    np.log10(np.max(surface_brightness)),
-                    fit_max,
-                    10.0,
-                ],
-                # [np.inf, np.inf, np.inf],
-            ),  # Setting the bounds for Sersic index between 0.1 and 10, effective radius between 0 and r_lim, surface brightness positive
-        )
-
-        sersic_residuals = np.log10(
-            surface_brightness[valid_fit] / y_scale
-        ) - sersic_profile_partial(r_fit[valid_fit], *bestfit)
-        ssr_sersic = np.sum(sersic_residuals**2)
-        chi2_red = ssr_sersic / (len(r_fit[valid_fit]) - len(bestfit))
-        cov = cov * chi2_red  # Scale covariance matrix by reduced chi-squared
-
-        # Find the best-fit parameters for de Vaucouleurs (n=4) and exponential (n=1) profiles
-        de_vaucouleurs_profile_partial = partial(
-            self.de_vaucouleurs_profile, y_scale=y_scale
-        )
-        bestfit_deV, _ = curve_fit(
-            de_vaucouleurs_profile_partial,
-            r_fit[valid_fit],
-            # surface_brightness[valid_fit] / y_scale,
-            np.log10(surface_brightness[valid_fit] / y_scale),
-            p0=[np.log10(np.max(surface_brightness) * 0.5), R_e],
-            bounds=(
-                [0, fit_min],
-                [np.log10(np.max(surface_brightness)), fit_max],
-            ),
-        )
-
-        de_vaucouleurs_residuals = np.log10(
-            surface_brightness[valid_fit] / y_scale
-        ) - de_vaucouleurs_profile_partial(r_fit[valid_fit], *bestfit_deV)
-        ssr_deV = np.sum(de_vaucouleurs_residuals**2)
-
-        exponential_profile_partial = partial(self.exponential_profile, y_scale=y_scale)
-        bestfit_exp, _ = curve_fit(
-            exponential_profile_partial,
-            r_fit[valid_fit],
-            # surface_brightness[valid_fit] / y_scale,
-            np.log10(surface_brightness[valid_fit] / y_scale),
-            p0=[np.log10(np.max(surface_brightness) * 0.5), R_e],
-            bounds=(
-                [0, fit_min],
-                [np.log10(np.max(surface_brightness)), fit_max],
-            ),
-        )
-
-        exponential_residuals = np.log10(
-            surface_brightness[valid_fit] / y_scale
-        ) - exponential_profile_partial(r_fit[valid_fit], *bestfit_exp)
-        ssr_exp = np.sum(exponential_residuals**2)
-
         # The best-fit parameters of surface brightness at the effective radius, effective radius, and Sersic index
         I_e_log_fit, R_e_fit, n_fit = bestfit
         I_e_fit = 10**I_e_log_fit  # Convert log10(I_e) back to I_e
 
-        surface_brightness_mean = np.sum(L_sorted[np.where(r_sorted < R_e_fit)[0]]) / (
-            np.pi * R_e_fit**2
+        surface_brightness_mean_fit = np.sum(
+            L_sorted[np.where(r_sorted < R_e_fit)[0]]
+        ) / (np.pi * R_e_fit**2)
+
+        surface_brightness_mean = np.sum(L_sorted[np.where(r_sorted < R_hsm)[0]]) / (
+            np.pi * R_hsm**2
         )
 
         # Calculate the "model" luminosity with the analytical formula in Xu+2017. The model is calculated within 7 times the effective radius.
@@ -4400,8 +4645,32 @@ class TNG50TullyFisherGenerator:
         # Find the velocity dispersion within 0.5 R_e_fit
         sigma_los = np.std(los_velocities)
 
+        # Luminosity-weighted velocity dispersion
+        indices_within_Rhsm = np.where(r_geo <= R_hsm)[0]
+        velocities_within_Rhsm = (
+            particles["Velocities"][indices_within_Rhsm]
+            - self.galaxy_data[galaxy_id]["SubhaloVel"]
+        )
+        if self.los_axis == 0:
+            los_velocities_hsm = velocities_within_Rhsm[:, 0]
+        elif self.los_axis == 1:
+            los_velocities_hsm = velocities_within_Rhsm[:, 1]
+        else:  # self.los_axis == 2
+            los_velocities_hsm = velocities_within_Rhsm[:, 2]
+
+        Lum_within_Rhsm = L_sorted[np.where(r_sorted <= R_hsm)[0]]
+        los_velocities_hsm_mean = np.sum(los_velocities_hsm * Lum_within_Rhsm) / np.sum(
+            Lum_within_Rhsm
+        )
+        sigma_los_lum_weighted = np.sqrt(
+            np.sum(
+                Lum_within_Rhsm * (los_velocities_hsm - los_velocities_hsm_mean) ** 2
+            )
+            / np.sum(Lum_within_Rhsm)
+        )
+
         print(
-            f"Galaxy {self.galaxy_data[galaxy_id]['SubhaloID']}, Band {band}: Fitted Sersic index n = {n_fit:.2f} with uncertainty {cov[2, 2] ** 0.5 if cov is not None else 'N/A'}, Effective radius R_e = {R_e_fit:.2f} kpc with uncertainty {cov[1, 1] ** 0.5 if cov is not None else 'N/A'}, Surface brightness I_e = {I_e_fit:.2e} erg/s/kpc^2, velocity dispersion σ_los = {sigma_los:.2f} km/s. The ssr for the de Vaucouleurs fit is {ssr_deV:.2e}, for the exponential fit is {ssr_exp:.2e}, and for the Sersic fit is {ssr_sersic:.2e}."
+            f"Galaxy {self.galaxy_data[galaxy_id]['SubhaloID']}, Band {band}: Fitted Sersic index n = {n_fit:.2f} with uncertainty {cov[2, 2] ** 0.5 if cov is not None else 'N/A'}, Effective radius R_e = {R_e_fit:.2f} kpc with uncertainty {cov[1, 1] ** 0.5 if cov is not None else 'N/A'}, Surface brightness I_e = {I_e_fit:.2e} erg/s/kpc^2, velocity dispersion σ_los = {sigma_los:.2f} km/s. The chi-squared for the de Vaucouleurs fit is {chi2_de_vaucouleurs:.2e}, for the exponential fit is {chi2_exponential:.2e}, and for the Sersic fit is {chi2:.2e}."
         )
 
         # plot_surface_brightness_profile(
@@ -4423,7 +4692,11 @@ class TNG50TullyFisherGenerator:
         # self.galaxy_data[galaxy_id]["is_elliptical"] = is_elliptical
         # self.galaxy_data[galaxy_id]["L_cumulative_" + band] = Lcum
         self.galaxy_data[galaxy_id]["MSB_" + band] = surface_brightness_mean
+        self.galaxy_data[galaxy_id]["MSB_fit_" + band] = surface_brightness_mean_fit
         self.galaxy_data[galaxy_id]["sigma_los_" + band] = sigma_los
+        self.galaxy_data[galaxy_id]["sigma_los_lum_weighted_" + band] = (
+            sigma_los_lum_weighted
+        )
         self.galaxy_data[galaxy_id]["fit_cov_matrix_" + band] = cov
 
         # For diagnostic purposes, also returns the input radius and surface brightness that used to fit the sersic profile
@@ -4433,6 +4706,12 @@ class TNG50TullyFisherGenerator:
         self.galaxy_data[galaxy_id]["surface_brightness_profile_" + band] = (
             surface_brightness[valid_fit]
         )  # surface brightness data used for fitting
+        # Reduced chi-squared of the sersic fit
+        self.galaxy_data[galaxy_id]["reduced_chi_squared_" + band] = chi2_red
+        # The total uncertainty
+        self.galaxy_data[galaxy_id]["surface_brightness_uncertainty_" + band] = (
+            sigma_total
+        )
 
         return None
 
@@ -4592,6 +4871,7 @@ def main():
     config = sys.argv[1]  # Reading in the path to the config file.
     pardict = ConfigObj(config)
     print(pardict["mode_load"])
+    print("The line-of-sight axis is set to:", pardict["los_axis"])
 
     if bool(int(pardict["Combined_hdf5"])):
         job_num = 0
@@ -4672,6 +4952,13 @@ def main():
             "sersic_n_unc": "Uncertainty in Sersic index from simultaneous fit to SDSS r, g, and i bands",
             "R_eff_sersic": "Effective radius from simultaneous fit to SDSS r, g, and i bands in kpc",
             "R_eff_sersic_unc": "Uncertainty in effective radius from simultaneous fit to SDSS r, g, and i bands in kpc",
+            "MSB_fit_+band": "Mean surface brightness within the fitted effective radius from Sersic profile in erg/s/kpc^2 in the specified band",
+            "sigma_los_lum_weighted_+band": "Luminosity-weighted line-of-sight velocity dispersion within R_hsm in km/s in the specified band",
+            "Pass_Sersic_Stellar_Cut": "Whether the galaxy passes the Sersic stellar cut. Requres the reduced chi-squared of the sersic fit below 5.0.",
+            "Pass_SFR_Gas_Cut": "Whether the galaxy passes the star formation rate gas cut. Requires more than 40 percent of gas in mass to be star-forming.",
+            "Pass_Fgas_in_Disk_Cut": "Whether the galaxy passes the gas fraction in disk cut. Requires at least 60 percent of gas to have angular momentum similar to the disk.",
+            "Pass_stellar_vrot_vsigma_cut": "Whether the galaxy passes the stellar vrot/vsigma cut. Requires vrot/vsigma > 1.0 for the stellar component.",
+            "Pass_gas_vrot_vsigma_cut": "Whether the galaxy passes the gas vrot/vsigma cut. Requires vrot/vsigma > 2.5 for the gas component.",
             "Other parameters": "For TNG50-1 spiral galaxy catalogues. Additional parameters are read in through the supplementary data files. See https://www.tng-project.org/data/docs/specifications/#sec5t for definitions. ",
         }
 
@@ -4704,6 +4991,19 @@ def main():
         }
 
         galaxy_data_all = []
+        if bool(int(pardict["save_particles"])):
+            stellar_data_all = []
+            gas_data_all = []
+
+        if (
+            pardict["galaxy_type"] == "spiral"
+            and pardict["simulation"] == "TNG50-1"
+            and int(pardict["los_axis"]) == 2
+        ):
+            galaxy_data_gold = []
+            if bool(int(pardict["save_particles"])):
+                stellar_data_gold = []
+                gas_data_gold = []
         for i in range(job_num):
             out_dir = pardict["out_dir"] + f"/job_id_{i}_{pardict['galaxy_type']}/"
 
@@ -4712,86 +5012,188 @@ def main():
                     out_dir + "/subhalo_data_analysis" + "_" + str(i) + ".npz",
                     allow_pickle=True,
                 )["arr_0"]
-                for j in range(len(galaxy_data)):
-                    galaxy_data_all.append(galaxy_data[j])
+                stellar_data = np.load(
+                    out_dir + "/stellar_data_analysis" + "_" + str(i) + ".npz",
+                    allow_pickle=True,
+                )["arr_0"]
+                gas_data = np.load(
+                    out_dir + "/gas_data_analysis" + "_" + str(i) + ".npz",
+                    allow_pickle=True,
+                )["arr_0"]
 
-                if i == 0:
-                    # Download the first 5 galaxies as test set
-                    np.savez(
-                        pardict["out_dir"] + "/subhalo_data_analysis_test_set.npz",
-                        np.array(galaxy_data[:5], dtype=object),
-                        allow_pickle=True,
-                    )
+                for j in range(len(galaxy_data)):
+                    if (
+                        pardict["galaxy_type"] == "spiral"
+                        and pardict["simulation"] == "TNG50-1"
+                        and int(pardict["los_axis"]) == 2
+                    ):
+                        pass_sersic_stellar_cut = False
+                        pass_sfr_gas_cut = False
+                        pass_fgas_in_disk_cut = False
+                        pass_stellar_vrot_vsigma_cut = False
+                        pass_gas_vrot_vsigma_cut = False
+
+                        # Select galaxies with stellar particles well fitted by the sersic profile
+                        if galaxy_data[j]["chi2_red_sersic"] < 1.5:
+                            pass_sersic_stellar_cut = True
+                        if galaxy_data[j]["Fraction_in_Disk_gas"] > 0.6:
+                            pass_fgas_in_disk_cut = True
+
+                        sfr_gas = gas_data[j]["StarFormationRate"]
+                        pos_rel_gas = (
+                            gas_data[j]["Coordinates"] - galaxy_data[j]["SubhaloPos"]
+                        )
+                        mass_gas = gas_data[j]["Masses"]
+                        index = np.where(
+                            (
+                                pos_rel_gas[:, 0] ** 2
+                                + pos_rel_gas[:, 1] ** 2
+                                + pos_rel_gas[:, 2] ** 2
+                            )
+                            ** 0.5
+                            < 2.0 * galaxy_data[j]["SubhaloHalfmassRadStars"]
+                        )[0]
+                        # Find gas within 2 times the stellar half-mass radius
+                        sfr_gas_within = sfr_gas[index]
+                        mass_gas_within = mass_gas[index]
+                        # Find gas particles within the radius with non-zero star formation rate
+                        sfr_gas_sf = np.where(sfr_gas_within > 0)[0]
+                        mass_gas_sf = mass_gas_within[sfr_gas_sf]
+                        f_sf_gas = (
+                            np.sum(mass_gas_sf) / np.sum(mass_gas_within)
+                            if np.sum(mass_gas_within) > 0
+                            else 0.0
+                        )
+                        if f_sf_gas > 0.5:
+                            pass_sfr_gas_cut = True
+
+                        mass_star = stellar_data[j]["Masses"]
+                        pos_rel_star = (
+                            stellar_data[j]["Coordinates"]
+                            - galaxy_data[j]["SubhaloPos"]
+                        )
+                        vel_rel_star = (
+                            stellar_data[j]["Velocities"] - galaxy_data[j]["SubhaloVel"]
+                        )
+                        vel_rel_gas = (
+                            gas_data[j]["Velocities"] - galaxy_data[j]["SubhaloVel"]
+                        )
+
+                        vrot_vsigma_star = kinematics.find_v_rot_v_sigma(
+                            mass_star,
+                            vel_rel_star,
+                            pos_rel_star,
+                            range=2.0 * galaxy_data[j]["SubhaloHalfmassRadStars"],
+                        )[0]
+                        vrot_vsigma_gas = kinematics.find_v_rot_v_sigma(
+                            mass_gas,
+                            vel_rel_gas,
+                            pos_rel_gas,
+                            range=2.0 * galaxy_data[j]["SubhaloHalfmassRadStars"],
+                        )[0]
+
+                        if vrot_vsigma_star > 1.0:
+                            pass_stellar_vrot_vsigma_cut = True
+                        if vrot_vsigma_gas > 2.5:
+                            pass_gas_vrot_vsigma_cut = True
+
+                        galaxy_data[j]["pass_sersic_stellar_cut"] = (
+                            pass_sersic_stellar_cut
+                        )
+                        galaxy_data[j]["pass_sfr_gas_cut"] = pass_sfr_gas_cut
+                        galaxy_data[j]["pass_fgas_in_disk_cut"] = pass_fgas_in_disk_cut
+                        galaxy_data[j]["pass_stellar_vrot_vsigma_cut"] = (
+                            pass_stellar_vrot_vsigma_cut
+                        )
+                        galaxy_data[j]["pass_gas_vrot_vsigma_cut"] = (
+                            pass_gas_vrot_vsigma_cut
+                        )
+
+                        if (
+                            pass_sersic_stellar_cut
+                            and pass_sfr_gas_cut
+                            and pass_fgas_in_disk_cut
+                            and pass_stellar_vrot_vsigma_cut
+                            and pass_gas_vrot_vsigma_cut
+                        ):
+                            galaxy_data_gold.append(galaxy_data[j])
+                            if bool(int(pardict["save_particles"])):
+                                stellar_data_gold.append(stellar_data[j])
+                                gas_data_gold.append(gas_data[j])
+
+                    galaxy_data_all.append(galaxy_data[j])
+                    if bool(int(pardict["save_particles"])):
+                        stellar_data_all.append(stellar_data[j])
+                        gas_data_all.append(gas_data[j])
+
+                # if i == 0:
+                #     # Download the first 5 galaxies as test set
+                #     np.savez(
+                #         pardict["out_dir"] + "/subhalo_data_analysis_test_set.npz",
+                #         np.array(galaxy_data[:5], dtype=object),
+                #         allow_pickle=True,
+                #     )
             except FileNotFoundError:
                 print(
                     f"No data found in {out_dir}, no galaxy satisfy the selection criteria."
                 )
 
-        # Append the description fields to the end of the list
-        # print(len(galaxy_data_all))
-        galaxy_data_all.append(description_fields_subhalo)
-        # print(len(galaxy_data_all))
-        # print(galaxy_data_all[-1])
+        description = np.array(
+            [
+                description_fields_subhalo,
+                description_fields_star,
+                description_fields_gas,
+            ],
+            dtype=object,
+        )
         np.savez(
-            pardict["out_dir"] + "/subhalo_data_analysis.npz",
+            pardict["out_dir"]
+            + f"/subhalo_data_analysis_{pardict['galaxy_type']}_{pardict['simulation']}_{pardict['los_axis']}.npz",
             np.array(galaxy_data_all, dtype=object),
+            allow_pickle=True,
+        )
+        np.savez(
+            pardict["out_dir"]
+            + f"/description_fields_{pardict['galaxy_type']}_{pardict['simulation']}_{pardict['los_axis']}.npz",
+            description,
             allow_pickle=True,
         )
 
         if bool(int(pardict["save_particles"])):
-            stellar_data_all = []
-            gas_data_all = []
-            for i in range(job_num):
-                out_dir = pardict["out_dir"] + f"/job_id_{i}_{pardict['galaxy_type']}/"
-
-                try:
-                    stellar_data = np.load(
-                        out_dir + "/stellar_data_analysis" + "_" + str(i) + ".npz",
-                        allow_pickle=True,
-                    )["arr_0"]
-                    gas_data = np.load(
-                        out_dir + "/gas_data_analysis" + "_" + str(i) + ".npz",
-                        allow_pickle=True,
-                    )["arr_0"]
-                    for j in range(len(stellar_data)):
-                        stellar_data_all.append(stellar_data[j])
-                        gas_data_all.append(gas_data[j])
-
-                    if i == 0:
-                        # Download the first 5 galaxies as test set
-                        np.savez(
-                            pardict["out_dir"] + "/stellar_data_analysis_test_set.npz",
-                            np.array(stellar_data[:5], dtype=object),
-                            allow_pickle=True,
-                        )
-                        np.savez(
-                            pardict["out_dir"] + "/gas_data_analysis_test_set.npz",
-                            np.array(gas_data[:5], dtype=object),
-                            allow_pickle=True,
-                        )
-                except FileNotFoundError:
-                    print(
-                        f"No data found in {out_dir}, no galaxy satisfy the selection criteria."
-                    )
-
-            # Append the description fields to the end of the list
-            # print(len(stellar_data_all), len(gas_data_all))
-            stellar_data_all.append(description_fields_star)
-            gas_data_all.append(description_fields_gas)
-            # print(len(stellar_data_all), len(gas_data_all))
-            # print(stellar_data_all[-1])
-            # print(gas_data_all[-1])
-
             np.savez(
-                pardict["out_dir"] + "/stellar_data_analysis.npz",
+                pardict["out_dir"]
+                + f"/stellar_data_analysis_{pardict['galaxy_type']}_{pardict['simulation']}_{pardict['los_axis']}.npz",
                 np.array(stellar_data_all, dtype=object),
                 allow_pickle=True,
             )
             np.savez(
-                pardict["out_dir"] + "/gas_data_analysis.npz",
+                pardict["out_dir"]
+                + f"/gas_data_analysis_{pardict['galaxy_type']}_{pardict['simulation']}_{pardict['los_axis']}.npz",
                 np.array(gas_data_all, dtype=object),
                 allow_pickle=True,
             )
+
+        if (
+            pardict["galaxy_type"] == "spiral"
+            and pardict["simulation"] == "TNG50-1"
+            and int(pardict["los_axis"] == 2)
+        ):
+            np.savez(
+                pardict["out_dir"] + "/subhalo_data_analysis_gold.npz",
+                np.array(galaxy_data_gold, dtype=object),
+                allow_pickle=True,
+            )
+            if bool(int(pardict["save_particles"])):
+                np.savez(
+                    pardict["out_dir"] + "/stellar_data_analysis_gold.npz",
+                    np.array(stellar_data_gold, dtype=object),
+                    allow_pickle=True,
+                )
+                np.savez(
+                    pardict["out_dir"] + "/gas_data_analysis_gold.npz",
+                    np.array(gas_data_gold, dtype=object),
+                    allow_pickle=True,
+                )
 
         print("✅ Combined data saved successfully!")
 
