@@ -44,6 +44,32 @@ def AngularMomentum(mass, pos, vel, return_ji=True, range=None):
         return ez
 
 
+def fraction_in_disk(mass, pos, vel, ez, range=None):
+    if isinstance(range, float):
+        if range > 0:
+            idx = np.linalg.norm(pos, axis=1) < range
+            if np.sum(idx) != 0:
+                j = np.cross(pos[idx], vel[idx])
+                jz = np.dot(ez[np.newaxis, :], j.T).flatten()
+                mass_weight_j = np.sum(
+                    jz / np.linalg.norm(j, axis=1) * mass[idx], axis=0
+                )
+                mass_sum = np.sum(mass[idx])
+                frac = mass_weight_j / mass_sum
+                return frac
+            else:
+                raise ZeroDivisionError(f"zero denominator")
+        else:
+            raise ValueError(f"range should be positive")
+    else:
+        j = np.cross(pos, vel)
+        jz = np.dot(ez[np.newaxis, :], j.T).flatten()
+        mass_weight_j = np.sum(jz / np.linalg.norm(j, axis=1) * mass, axis=0)
+        mass_sum = np.sum(mass)
+        frac = mass_weight_j / mass_sum
+        return frac
+
+
 def RotationMatrix(z, zprime):
     """
     z: original unit vector
@@ -58,19 +84,57 @@ def RotationMatrix(z, zprime):
     return Rotation.from_rotvec(u * theta)
 
 
-def RotationVelocity(vel, pos, ez, return_etheta=True):
+def RotationVelocity(vel, pos, ez, return_etheta=True, eps=1e-8):
     """
     return
         vrot: rotational velocity component
         etheta: direction of the rotation
     """
-    etheta = np.cross(ez, pos)
-    etheta = etheta / np.linalg.norm(etheta, axis=1)[:, np.newaxis]
-    vrot = np.einsum("ij,ij->i", vel, etheta)
+    pos_perp = pos - np.dot(pos, ez)[:, np.newaxis] * ez[np.newaxis, :]
+    etheta = np.cross(ez, pos_perp)
+
+    # etheta = np.cross(ez, pos)
+    norm = np.linalg.norm(etheta, axis=1)
+    mask = norm > eps
+    if np.sum(mask) != len(norm):
+        print("Some particles lie very close to the rotation axis or at the center")
+
+    etheta_new = np.zeros(etheta.shape)
+    etheta_new[mask] = etheta[mask] / norm[mask, np.newaxis]
+    vrot = np.zeros(len(vel))
+    vrot[mask] = np.einsum("ij,ij->i", vel[mask], etheta_new[mask])
     if return_etheta:
-        return vrot, etheta
+        return vrot, etheta_new
     else:
         return vrot
+
+
+def find_v_rot_v_sigma(mass, vel, pos, range=None):
+    ez = AngularMomentum(mass, pos, vel, range=range, return_ji=False)
+
+    if range is not None and range > 0:
+        idx = np.linalg.norm(pos, axis=1) < range
+    else:
+        idx = np.arange(pos.shape[0])
+
+    pos = pos[idx]
+    vel = vel[idx]
+    mass = mass[idx]
+
+    vrot, etheta = RotationVelocity(vel, pos, ez)
+    vrot_mass = np.sum(mass * vrot) / np.sum(mass)
+
+    # Velocity dispersion (3D, relative to mean rotation)
+    vel_mean = vrot[:, None] * etheta
+    vel_residual = vel - vel_mean
+
+    # Mass weighted velocity dispersion
+    sigma2 = np.sum(mass * np.sum(vel_residual**2, axis=1)) / np.sum(mass)
+    sig_tot = np.sqrt(sigma2)
+
+    vrot_v_sigma = vrot_mass / sig_tot
+
+    return vrot_v_sigma, vrot, sig_tot
 
 
 def RadiusDecomp(pos, ez):
